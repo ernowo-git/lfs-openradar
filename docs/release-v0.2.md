@@ -18,6 +18,42 @@ Wine/Proton in windowed or borderless mode. Native Wayland, Gamescope, exclusive
 fullscreen, ARM64, and Linux automatic foreground detection are not acceptance
 targets for this release. Linux currently exposes manual overlay visibility.
 
+## Wayland approach
+
+A Wayland desktop and a native Wayland overlay are separate support targets.
+The planned Linux binary can be evaluated through XWayland first. This retains
+the existing X11 window backend, but stacking above the game, click-through,
+independent positioning, and saved placement need testing on the actual desktop.
+Do not advertise Wayland support from a successful build or control-panel launch.
+
+The locked winit backend selects Wayland when WAYLAND_DISPLAY or WAYLAND_SOCKET
+is present. For a diagnostic XWayland run, with a valid DISPLAY and XWayland
+available, launch only this process with those variables removed:
+
+```sh
+env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET ./lfs-openradar
+```
+
+This is an unverified test route, not a supported launch recipe yet. Add an
+explicit backend option if acceptance establishes an XWayland configuration.
+Record the compositor/version and whether the game itself uses XWayland.
+
+Native Wayland ordinary windows do not provide the saved absolute placement or
+always-on-top controls our gadgets currently use. Proper overlay behavior needs
+a separate surface backend, for example wlr-layer-shell on a compositor that
+supports it. Keep the ordinary control panel, but create one overlay surface per
+gadget, with output selection, anchored offsets, input regions, scale handling,
+and a placement editor. Integrate those surfaces with egui/wgpu and test monitor
+changes, redraw, and lifecycle behavior. Layer-shell assigns a surface role;
+existing ordinary eframe windows cannot simply be promoted to that role.
+
+Select the user's compositor before committing to native Wayland support; the
+protocol is not universal. Rough planning estimates are a few days to investigate
+and test XWayland, and several weeks for a native backend on one selected
+compositor. These estimates include integration and live gaming checks and are
+not delivery commitments. Keep native Wayland outside v0.2 acceptance unless its
+scope and implementation are explicitly added after that investigation.
+
 ## Downloads
 
 Build both platforms from the same reviewed release commit with Cargo.lock.
@@ -129,3 +165,5 @@ release binaries, and live platform acceptance are still outstanding.
 - [Rust cross-compilation](https://rust-lang.github.io/rustup/cross-compilation.html)
 - [Managing GitHub releases](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)
 - [Winit window positioning restrictions](https://docs.rs/winit/0.30.13/winit/window/struct.Window.html#method.set_outer_position)
+- [Winit window level restrictions](https://docs.rs/winit/0.30.13/winit/window/struct.Window.html#method.set_window_level)
+- [Wayland layer-shell protocol](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-layer-shell-unstable-v1.xml)
