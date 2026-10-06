@@ -1,5 +1,10 @@
 # Local LFS client. Enable its listener by typing /insim 29999 in LFS.
 insim_address = "127.0.0.1:29999"
+# Local LFS Game Admin password (plain text). LFS_INSIM_ADMIN overrides it at launch.
+insim_password = ""
+# Optional: folder containing LFS.exe, remembered by the startup setup controls.
+# This setting alone does not change LFS; use Enable InSim at startup in the panel.
+lfs_directory = ""
 outsim_bind = "127.0.0.1:30000"
 # Decimal 511 = LFS OutSim Opts 1ff (hexadecimal), full LFST packet.
 outsim_options = 511
@@ -31,4 +36,10 @@ scale = 1.0
 enabled = false
 window_x = 376.0
 window_y = 260.0
+scale = 1.0
+
+[performance_delta]
+enabled = false
+window_x = 376.0
+window_y = 360.0
 scale = 1.0

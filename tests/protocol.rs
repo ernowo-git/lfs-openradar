@@ -139,6 +139,6 @@ fn outsim_rejects_layout_id_nan_and_outgauge() {
 #[test]
 fn initialization_keeps_mci_on_tcp() {
     let p = insim::init(20, "").unwrap();
-    assert_eq!(&p[..12], &[11, 1, 1, 0, 0, 0, 36, 0, 9, 0, 20, 0]);
+    assert_eq!(&p[..12], &[11, 1, 1, 0, 0, 0, 36, 1, 9, 0, 20, 0]);
     assert!(insim::init(20, &"a".repeat(16)).is_err());
 }

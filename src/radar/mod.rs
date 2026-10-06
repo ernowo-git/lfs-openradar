@@ -79,6 +79,7 @@ struct TimedPose {
 }
 #[derive(Default)]
 pub struct Engine {
+    delta: crate::delta::DeltaEngine,
     gaps: GapEngine,
     players: BTreeMap<u8, Player>,
     state: Option<State>,
@@ -87,6 +88,8 @@ pub struct Engine {
     snapshots: VecDeque<Snapshot>,
     poses: VecDeque<TimedPose>,
     outsim_clock: Option<u32>,
+    delta_association: Option<TimedPose>,
+    association_stale_ms: u64,
     previous_threats: BTreeMap<u8, Threat>,
     pub mci_sets: u64,
     pub outsim_samples: u64,
@@ -94,6 +97,8 @@ pub struct Engine {
 }
 impl Engine {
     pub fn clear(&mut self) {
+        self.delta.clear();
+        self.delta_association = None;
         self.gaps.forget_track();
         self.players.clear();
         self.state = None;
@@ -124,6 +129,9 @@ impl Engine {
     pub fn packet(&mut self, packet: Packet, time: u64) -> Result<(), String> {
         match packet {
             Packet::State(state) => {
+                if !self.delta.track_matches(&state.track) {
+                    self.delta.clear();
+                }
                 if !self.gaps.track_matches(&state.track) {
                     self.gaps.forget_track();
                 }
@@ -133,11 +141,15 @@ impl Engine {
                         || old.camera != state.camera
                         || (old.flags ^ state.flags) & (1 | 2 | 4 | 8 | 256) != 0
                 }) {
+                    self.delta.reset_lap();
                     self.clear_histories();
                 }
                 self.state = Some(state);
             }
             Packet::Player(player) => {
+                if self.selected == Some(player.plid) {
+                    self.delta.reset_lap();
+                }
                 // NPL for an existing PLID means re-entry or car replacement.
                 if self.players.contains_key(&player.plid) {
                     self.clear_histories();
@@ -145,34 +157,74 @@ impl Engine {
                 self.players.insert(player.plid, player);
             }
             Packet::Pit(id) => {
+                if self.selected == Some(id) {
+                    self.delta.reset_lap();
+                }
                 if let Some(p) = self.players.get_mut(&id) {
                     p.in_garage = true;
                 }
                 self.clear_histories();
             }
             Packet::Leave(id) => {
+                if self.selected == Some(id) {
+                    self.delta.reset_lap();
+                }
                 self.players.remove(&id);
                 self.clear_histories();
             }
             Packet::ConnectionLeft(id) => {
+                if self
+                    .selected
+                    .and_then(|p| self.players.get(&p))
+                    .is_some_and(|p| p.ucid == id)
+                {
+                    self.delta.reset_lap();
+                }
                 self.players.retain(|_, p| p.ucid != id);
                 self.clear_histories();
             }
-            Packet::Reset(_) => self.clear_histories(),
-            Packet::Session => self.clear_histories(),
+            Packet::Reset(id) => {
+                if self.selected == Some(id) {
+                    self.delta.reset_lap();
+                }
+                self.clear_histories();
+            }
+            Packet::Session => {
+                self.delta.reset_reference();
+                self.clear_histories();
+            }
+            Packet::LayoutChanged => self.delta.reset_reference(),
+            Packet::Lap {
+                plid,
+                time_ms,
+                penalty,
+            } => {
+                if self.selected == Some(plid) {
+                    self.delta.lap_report(time_ms, penalty, time);
+                }
+            }
+            Packet::InvalidLap(id) => {
+                if self.selected == Some(id) {
+                    self.delta.invalidate();
+                }
+            }
             Packet::RaceStart { info, requested } => {
                 if !requested {
+                    self.delta.reset_reference();
                     self.clear_histories();
                 }
+                self.delta.set_track(info.clone());
                 self.gaps.set_track(info);
             }
             Packet::Takeover(_) => {
+                self.delta.reset_reference();
                 // Re-request roster before trusting ownership again.
                 self.players.clear();
                 self.clear_histories();
             }
             Packet::Camera(id) => {
                 if self.selected == Some(id) {
+                    self.delta.reset_lap();
                     self.state = None;
                     self.clear_histories();
                 }
@@ -193,6 +245,24 @@ impl Engine {
                         self.clear_histories();
                     }
                     self.gaps.update(&cars, time);
+                    if let Some(car) = self
+                        .selected
+                        .and_then(|id| cars.iter().find(|c| c.plid == id))
+                    {
+                        // Opponents' pit/roster events clear radar histories, but
+                        // must not discard the local driver's recorded lap.
+                        if self.delta_association.is_some_and(|pose| {
+                            time.saturating_sub(pose.time) <= self.association_stale_ms
+                                && pose.pose.distance(car.pose) <= 12.0
+                                && wrap_angle(pose.pose.heading - car.pose.heading).abs() <= 1.0
+                        }) {
+                            self.delta.update(car, time);
+                        } else {
+                            self.delta.reset_lap();
+                        }
+                    } else {
+                        self.delta.reset_lap();
+                    }
                     self.snapshots.push_back(Snapshot { time, cars });
                     while self.snapshots.len() > 64 {
                         self.snapshots.pop_front();
@@ -203,7 +273,13 @@ impl Engine {
             _ => {}
         }
         let selected = self.select_driver();
+        self.delta.select_driver(
+            selected
+                .and_then(|id| self.players.get(&id))
+                .map(|p| (p.ucid, p.model.clone())),
+        );
         if self.selected != selected {
+            self.delta_association = None;
             self.gaps.clear();
             self.poses.clear();
             self.outsim_clock = None;
@@ -213,6 +289,7 @@ impl Engine {
         Ok(())
     }
     pub fn outsim(&mut self, sample: Sample, time: u64, config: &Config) {
+        self.association_stale_ms = config.stale_ms;
         self.outsim_samples += 1;
         let Some(id) = self.selected else {
             self.rejected_outsim += 1;
@@ -230,6 +307,8 @@ impl Engine {
             || local.pose.distance(sample.pose) > 12.0
             || wrap_angle(local.pose.heading - sample.pose.heading).abs() > 1.0
         {
+            self.delta.reset_lap();
+            self.delta_association = None;
             self.poses.clear();
             self.outsim_clock = None;
             self.rejected_outsim += 1;
@@ -248,14 +327,20 @@ impl Engine {
                     return;
                 }
                 self.poses.clear();
+                self.delta.reset_lap();
             }
         }
         if self.poses.back().is_some_and(|last| {
             last.pose.distance(sample.pose) > 10.0 + time.saturating_sub(last.time) as f64 * 0.15
         }) {
+            self.delta.reset_lap();
             self.poses.clear();
         }
         self.outsim_clock = Some(sample.time_ms);
+        self.delta_association = Some(TimedPose {
+            time,
+            pose: sample.pose,
+        });
         self.poses.push_back(TimedPose {
             time,
             pose: sample.pose,
@@ -277,6 +362,19 @@ impl Engine {
         }
         self.gaps
             .frame(self.selected, &self.players, now, config.stale_ms)
+    }
+    pub fn delta(&self, now: u64, config: &Config, radar: &RadarFrame) -> crate::delta::DeltaFrame {
+        if !radar.live || radar.uncertain {
+            return crate::delta::DeltaFrame::unavailable(&radar.status);
+        }
+        if self
+            .state
+            .as_ref()
+            .is_none_or(|s| !self.delta.track_matches(&s.track))
+        {
+            return crate::delta::DeltaFrame::unavailable("Waiting for matching track information");
+        }
+        self.delta.frame(now, config.stale_ms)
     }
     pub fn frame(&mut self, now: u64, config: &Config) -> RadarFrame {
         let mut frame = RadarFrame {

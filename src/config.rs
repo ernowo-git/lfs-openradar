@@ -32,6 +32,9 @@ impl Default for GapSettings {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub insim_address: SocketAddr,
+    pub insim_password: InSimPassword,
+    /// Folder containing the user's LFS.exe; only the setup button edits LFS.
+    pub lfs_directory: String,
     pub outsim_bind: SocketAddr,
     /// Zero selects the legacy layout; otherwise OutSim Opts bitmask.
     pub outsim_options: u16,
@@ -54,12 +57,25 @@ pub struct Config {
     pub radar_enabled: bool,
     pub gap_ahead: GapSettings,
     pub gap_behind: GapSettings,
+    pub performance_delta: GapSettings,
+}
+
+/// Serialize the configured secret, but redact it in diagnostic Debug output.
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct InSimPassword(pub String);
+impl std::fmt::Debug for InSimPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[redacted]")
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             insim_address: "127.0.0.1:29999".parse().unwrap(),
+            insim_password: InSimPassword::default(),
+            lfs_directory: String::new(),
             outsim_bind: "127.0.0.1:30000".parse().unwrap(),
             outsim_options: 0x1ff,
             outsim_id: 24601,
@@ -80,17 +96,23 @@ impl Default for Config {
             radar_enabled: true,
             gap_ahead: GapSettings::default(),
             gap_behind: GapSettings::default(),
+            performance_delta: GapSettings::default(),
         }
     }
 }
 
 impl Config {
+    pub fn effective_insim_password(&self) -> String {
+        std::env::var("LFS_INSIM_ADMIN").unwrap_or_else(|_| self.insim_password.0.clone())
+    }
     pub fn expected_outsim_id(&self) -> Option<i32> {
         (self.outsim_id != 0).then_some(self.outsim_id)
     }
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut config: Self = toml::from_str(&raw).map_err(|e| e.to_string())?;
+        // TOML errors can echo source lines containing the password.
+        let mut config: Self = toml::from_str(&raw)
+            .map_err(|_| "Invalid TOML configuration; check field names and values".to_string())?;
         config.validate()?;
         config.prepare_gap_positions();
         Ok(config)
@@ -108,6 +130,7 @@ impl Config {
         for (settings, legacy_y, offset_y) in [
             (&mut self.gap_ahead, 0.12, 0.0),
             (&mut self.gap_behind, 0.88, 100.0),
+            (&mut self.performance_delta, 0.5, 200.0),
         ] {
             let legacy = settings.legacy_x.is_some() || settings.legacy_y.is_some();
             settings.window_x.get_or_insert(if legacy {
@@ -127,7 +150,8 @@ impl Config {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
-        for settings in [&self.gap_ahead, &self.gap_behind] {
+        crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
+        for settings in [&self.gap_ahead, &self.gap_behind, &self.performance_delta] {
             if [settings.window_x, settings.window_y]
                 .iter()
                 .flatten()

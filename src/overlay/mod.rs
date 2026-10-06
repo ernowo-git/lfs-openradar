@@ -2,6 +2,8 @@
 #[cfg(feature = "desktop")]
 mod desktop;
 #[cfg(feature = "desktop")]
+mod folder_picker;
+#[cfg(feature = "desktop")]
 mod graphics_log;
 #[cfg(feature = "desktop")]
 mod window;

@@ -42,6 +42,7 @@ X11. Wayland and Gamescope need their own platform work and verification.
 | Split and lap timing | InSim `IS_SPX`, `IS_LAP`, session/player lifecycle and validity information | Show completed splits, sectors, lap time, and delta to the driver's best valid lap. Keep session records as a separate comparison. |
 | Gap ahead / behind at timing lines | InSim split/lap events, lap identity and race order | Compare elapsed race times at the same timing line and lap. Identify the compared driver and retain the last measurement with its age. |
 | Continuous gap ahead / behind | InSim MCI path node/lap/order/positions + track path/progress model; OutSim local distance where available | Estimate time gaps from matching progress histories. Label them estimated and withhold values when progress or source association is unreliable. |
+| Live performance delta | InSim MCI path nodes/pose, `IS_LAP`, `IS_HLV`, and OutSim association | Implemented on the feature branch: estimate time gain/loss against a fully recorded session-best lap, interpolate progress between reference nodes, and display a trend in an independent gadget. Live driving acceptance remains pending. |
 
 The installed LFS developer file `docs/OutSimPack.txt` defines `OSO_DRIVE` as
 option bit `0x20`, with Gear and EngineAngVel, and `OSO_DISTANCE` as `0x40`, with

@@ -74,11 +74,25 @@ impl Demo {
     pub fn snapshot(&mut self, now: u64, config: &Config) -> Snapshot {
         while self.next_tick <= now {
             let tick = self.next_tick;
+            if tick > 0 && tick.is_multiple_of(100_000) {
+                self.engine
+                    .packet(
+                        Packet::Lap {
+                            plid: 1,
+                            time_ms: 100_000,
+                            penalty: 0,
+                        },
+                        tick,
+                    )
+                    .unwrap();
+            }
             let seconds = tick as f64 / 1000.0;
-            let heading = 0.35 * (seconds * 0.4).sin();
+            let angle = seconds * std::f64::consts::TAU / 100.0;
+            let heading = angle - std::f64::consts::FRAC_PI_2;
+            let radius = 1500.0 / std::f64::consts::TAU;
             let me = Pose {
-                x: 0.0,
-                y: seconds * 15.0,
+                x: radius * angle.sin(),
+                y: radius * (1.0 - angle.cos()),
                 z: 0.0,
                 heading,
             };
@@ -146,6 +160,7 @@ impl Demo {
         let mut frame = self.engine.frame(now, config);
         frame.status = format!("DEMO · {}", frame.status);
         Snapshot {
+            delta: self.engine.delta(now, config, &frame),
             gaps: self.engine.gaps(now, config, &frame),
             connected: true,
             version: "synthetic".into(),

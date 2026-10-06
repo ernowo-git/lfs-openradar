@@ -19,6 +19,7 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
     let config = Config {
         insim_address: listener.local_addr().unwrap(),
         outsim_bind: udp_reservation.local_addr().unwrap(),
+        insim_password: lfs_openradar::config::InSimPassword("test-secret".into()),
         interpolation_ms: 20,
         stale_ms: 100,
         hide_ms: 200,
@@ -95,7 +96,7 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
             thread::sleep(Duration::from_millis(20));
         }
     });
-    let runtime = Runtime::start_with_password(config, "test-secret".into()).unwrap();
+    let runtime = Runtime::start(config).unwrap();
     let overlay_reader = runtime.snapshot_reader();
     let start = Instant::now();
     while !overlay_reader.snapshot().frame.live && start.elapsed() < Duration::from_secs(3) {

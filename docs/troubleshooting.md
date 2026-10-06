@@ -17,6 +17,8 @@ current Windows build; Linux/Proton behavior has not been verified here.
 | Size does not change while dragging its slider | Expected: release the pointer and allow 250 ms without another change. The native window then receives one settled size. |
 | Side range changes visually but live detections use the previous range | Click **Apply / reconnect** to update the live telemetry worker's configuration. **Save settings** persists settings for the next launch. |
 | InSim reports a password mismatch | Enter LFS's multiplayer admin password in the masked **InSim password** field, then **Apply / reconnect**. Leave it blank only if LFS has no admin password. |
+| Have to type `/insim` every time LFS starts | Use **LFS startup setup → Enable InSim at startup**, then restart LFS. See the [startup setup guide](lfs-startup-setup.md) for folder selection, backups, and port conflicts. |
+| Startup setup cannot write the script | Check that the selected installation is writable and `autoexec.lfs` is not read-only. The setup reports file errors; an existing script is backed up before changes. |
 | Cannot bind OutSim / UDP port already in use | Close any previous radar instance. Check for another telemetry consumer on the same port and configure distinct destinations or an external relay. |
 | Whole PC freezes or black-screens | Preserve the next available logs and Windows events. Follow the graphics evidence section; do not repeatedly provoke a hard lock to test a fix. |
 
@@ -24,8 +26,8 @@ Keep the control panel open: closing it exits OpenRadar and releases its sockets
 Disable Position mode after placement to restore the borderless, mouse
 click-through overlay with a transparent background. The dark radar backing
 appears in Position mode and in the control-panel preview. Save settings after
-moving it if the position should survive a restart. The password is held in
-memory and is not saved in TOML.
+moving it if the position should survive a restart. **Save settings** also saves
+the masked InSim password as plain text in the local TOML file.
 
 ## Telemetry checks
 
@@ -77,9 +79,9 @@ so it releases the UDP port, then run:
 cargo run --no-default-features --locked -- --headless --seconds 10
 ```
 
-Headless live mode supports the `LFS_INSIM_ADMIN` launch environment variable if
-LFS requires a password. The panel's in-memory password does not carry into a
-new process. Do not include the variable's value in diagnostic output.
+Desktop and headless live mode load `insim_password` from TOML. The
+`LFS_INSIM_ADMIN` launch environment variable overrides that value when present.
+Do not include the password or variable's value in diagnostic output.
 
 A synthetic check needs neither LFS nor sockets and also avoids graphics:
 
