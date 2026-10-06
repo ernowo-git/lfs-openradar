@@ -81,6 +81,8 @@ class PackageTests(unittest.TestCase):
                 (root / name).write_text("public content")
             (root / "docs").mkdir()
             (root / "docs/configuration.md").write_text("configuration")
+            (root / "docs/images").mkdir()
+            (root / "docs/images/preview.png").write_bytes(b"public preview fixture")
             (root / "vendor/eframe").mkdir(parents=True)
             for name in ["LICENSE-MIT", "OPENRADAR-PATCH.md"]:
                 (root / "vendor/eframe" / name).write_text("notice")
@@ -96,11 +98,13 @@ class PackageTests(unittest.TestCase):
                 paths = archive.namelist()
                 self.assertIn("lfs-openradar.exe", paths)
                 self.assertIn("docs/configuration.md", paths)
+                self.assertIn("docs/images/preview.png", paths)
                 self.assertIn("vendor/eframe/LICENSE-MIT", paths)
                 self.assertNotIn("openradar.local.toml", paths)
                 self.assertNotIn("openradar.graphics.log", paths)
             with tarfile.open(output / names[3]) as archive:
                 self.assertEqual(archive.getmember("lfs-openradar").mode, 0o755)
+                self.assertIn("docs/images/preview.png", archive.getnames())
                 self.assertNotIn("openradar.local.toml", archive.getnames())
             files = release.checksums(output, "0.3.0")
             self.assertEqual(len(files), 5)

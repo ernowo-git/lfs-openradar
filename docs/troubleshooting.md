@@ -57,7 +57,7 @@ OutSim Opts 1ff
 ```
 
 LFS writes the options as hexadecimal `1ff`; OpenRadar TOML uses decimal `511`.
-See [configuration and supported layouts](../README.md#configuration) for legacy
+See [configuration and supported layouts](configuration.md#telemetry-options) for legacy
 OutSim packets. Addresses must be loopback addresses with nonzero ports.
 
 | Control-panel status | Interpretation / next check |

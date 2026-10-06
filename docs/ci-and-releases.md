@@ -71,7 +71,7 @@ Packaging uses an explicit file list and excludes local TOML settings,
 passwords, logs, recordings, and build caches. Windows needs the Microsoft
 Visual C++ x64 runtime. Linux targets Ubuntu 22.04/glibc 2.35 or newer with
 X11 libraries and suitable graphics drivers; Linux gaming overlay support
-remains experimental. See [the README](../README.md#platform-status).
+remains experimental. See [platform status](usage.md#platform-status).
 
 ## Failed runs and retries
 
@@ -98,7 +98,7 @@ python .github/scripts/release.py check
 python -m unittest discover -s .github/scripts -p "test_*.py" -v
 ```
 
-Run the Rust commands listed in [the README](../README.md#build-and-verification)
+Run the Rust commands listed in [the README](../README.md#testing)
 for application changes. Workflow definitions can additionally be checked with
 `actionlint .github/workflows/ci.yml .github/workflows/release.yml`.
 Linux builds run on GitHub's Linux runners; no local Linux build is required.

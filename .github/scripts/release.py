@@ -114,7 +114,10 @@ def package(binary: Path, output: Path, version: str, platform: str,
         # An explicit allowlist keeps local TOML passwords, logs, and caches out.
         for name in ["README.md", "LICENSE", "openradar.example.toml", "Cargo.lock"]:
             shutil.copy2(root / name, stage / name)
-        for source in sorted((root / "docs").rglob("*.md")):
+        documentation = list((root / "docs").rglob("*.md"))
+        documentation.extend(path for path in (root / "docs" / "images").rglob("*")
+                             if path.is_file() and path.suffix.lower() in {".png", ".gif", ".jpg", ".jpeg", ".svg"})
+        for source in sorted(documentation):
             target = stage / source.relative_to(root)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)

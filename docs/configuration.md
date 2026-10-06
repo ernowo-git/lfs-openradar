@@ -89,7 +89,7 @@ click **Enable InSim at startup** to update its startup script. See the
 
 InSim and OutSim addresses must be loopback addresses with nonzero ports.
 OutSim options in TOML are decimal: `511` corresponds to LFS's hexadecimal `1ff`.
-See [LFS setup](../README.md#lfs-setup) for the required game settings.
+See [LFS setup](../README.md#connect-lfs) for the required game settings.
 
 Supported OutSim formats:
 
@@ -112,6 +112,6 @@ collision predictions. Model-specific dimensions and origin offsets still need
 calibration. A height gate reduces bridge/overpass detections but needs track
 testing.
 
-For gadget placement and performance-delta behavior, see the README's
-[gap gadgets](../README.md#gap-gadgets-and-control-panel-grid) and
-[live performance delta](../README.md#live-performance-delta) sections.
+For gadget placement and performance-delta behavior, see the usage guide's
+[gap gadgets](usage.md#gap-gadgets-and-control-panel-grid) and
+[live performance delta](usage.md#live-performance-delta) sections.
