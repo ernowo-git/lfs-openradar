@@ -1,7 +1,8 @@
 # v0.2 release plan
 
-Prepared 6 October 2026. Status: planned, not tagged or published.
-Feature branch: `codex/live-gap-gadgets`.
+Prepared 6 October 2026. Status: local release candidates prepared; GitHub tag,
+draft upload, and publication pending.
+Feature work merged through PR #1. Release branch: `codex/release-v0.2`.
 
 ## Scope
 
@@ -155,9 +156,22 @@ untested Linux binary substituted for these checks.
    package startup against the tagged commit. Publish v0.2 only after the stated
    gates pass. Preserve the v0.1 release for rollback and comparison.
 
-At the time this plan was written, Windows automated checks and native demo
-rendering have passed for the feature work. Linux build/CI setup, packaged
-release binaries, and live platform acceptance are still outstanding.
+Local candidate preparation uses Rust 1.99.0 on both platforms. Windows automated
+checks (45 desktop tests and 30 headless tests), DX12 demo rendering, and package
+startup pass. Linux passes the same tests and clippy in an Ubuntu 22.04 build
+environment under WSL, plus an Xvfb demo rendered by Mesa llvmpipe/Vulkan. The ELF
+requires glibc 2.35 or newer. Windows imports VCRUNTIME140.dll and the Universal
+CRT; the release notes identify the supported Microsoft runtime download.
+
+The multiple-window screenshot check exposed incorrect shared-readback delivery
+in the vendored eframe integration. The local correction routes each image to
+its originating viewport and passes actual release-executable previews on both
+platforms. See vendor/eframe/OPENRADAR-PATCH.md for the implementation scope.
+
+Release candidates include license notices and omit local settings, passwords,
+logs, recordings, and previews. GitHub Actions build automation, fresh-machine
+and newer-distribution startup, and live game acceptance remain outstanding.
+Keep the GitHub release as a draft until its claimed platform checks are complete.
 
 ## References
 
