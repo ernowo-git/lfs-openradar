@@ -1,6 +1,6 @@
 # lfs-openradar
 
-Standalone Rust proximity radar for Live for Speed. The prototype receives
+Standalone Rust proximity radar and gap gadgets for Live for Speed. The prototype receives
 InSim/MCI opponents and required OutSim local telemetry, interpolates their
 histories, and draws a radar using egui/winit/wgpu.
 
@@ -8,7 +8,9 @@ histories, and draws a radar using egui/winit/wgpu.
 
 OpenRadar will grow into a modular overlay with independently configurable
 radar, split/lap timing, gear, RPM, and gap-ahead/gap-behind widgets. These
-additional gadgets are planned, not included in `v0.1`. They will share the
+additional gadgets were not included in `v0.1`. The current feature branch adds
+estimated gap-ahead/gap-behind gadgets and a wrapping control-panel grid;
+split/lap timing, gear, and RPM remain planned. The gadgets share the
 existing Rust telemetry runtime: InSim for opponents and timing, and modern
 OutSim for local pose, gear, and engine speed. OutGauge remains optional for
 later dashboard fields.
@@ -24,6 +26,62 @@ connection/coexistence gate.
 See the [product roadmap](docs/roadmap.md) for milestones, telemetry requirements,
 widget architecture, and acceptance criteria.
 
+## Gap gadgets and control-panel grid
+
+The control panel presents Radar, Gap ahead, and Gap behind cards in insertion
+order. Cards fill each row from left to right, wrap to the left of the next row
+when another card cannot fit, and reflow when the window is resized. Narrow
+windows use one column; extra rows and global controls are vertically scrollable.
+
+Radar, Gap ahead, and Gap behind each have a separate transparent overlay window.
+Enable the gap gadgets from their cards, turn on each card's **Position mode**,
+and drag that gadget's title bar anywhere on the desktop. Turn Position mode off
+to restore its borderless, mouse click-through display. Each gap also has screen
+X/Y controls, a **Move gadget** handle in Position mode, and a Scale control.
+**Save settings** persists each window's screen coordinates and scale.
+Existing TOML files retain their radar settings and default to radar enabled,
+with both new gap gadgets disabled. Earlier normalized gap X/Y values are
+migrated to screen coordinates; future saves use `window_x` and `window_y` in
+logical screen pixels. Fresh gap windows start to the right of the radar.
+
+**Show overlays** controls all windows, and each card's Enabled setting controls
+its own gadget. Closing a gadget window in Position mode disables that gadget.
+The radar retains its own size and position when gaps are enabled or moved.
+All windows share one telemetry connection, but repaint independently; hidden
+windows keep their existing graphics surfaces for reuse. Background hiding
+applies to each window, with its own Position mode allowing placement outside LFS.
+
+Gaps compare the immediately preceding/following **race-order** driver, including
+AI, rather than the nearest car on the radar. Both show the driver, race position,
+an estimate such as `~5.0 s`, and the measurement age. Lapped neighbors show lap
+separation. This first implementation supports races with standard track timing;
+practice/qualifying rankings and custom/open timing layouts show unavailable.
+
+The existing InSim connection requests track node count and finish-node metadata.
+For each complete MCI set, the gap engine keeps up to 30 seconds of node-passage
+history (also capped at 3,100 passages per car). It compares both cars' passage
+times at the trailing car's latest crossed node, matching lap identity across the
+finish line. Skipped-node times are interpolated between updates. No distance
+divided by speed or forward prediction is used. Values update as nodes are
+crossed; arrival timestamps, node spacing, and network delay limit accuracy.
+
+Missing history, unknown/tied race positions, lagging/out-of-path cars, backwards
+progress, resets, and stale or mismatched telemetry withhold seconds. A crossing
+older than two seconds is unavailable until progress resumes. Both gadgets share
+the current local-driver/OutSim association gate. Live two-car validation against
+LFS timing remains required; synthetic checks do not establish live accuracy.
+
+For a native preview with both gaps enabled, create a TOML file with
+`[gap_ahead]` and `[gap_behind]` sections containing `enabled = true`, then run:
+
+```text
+cargo run -- --demo --config YOUR_CONFIG.toml --seconds 12 --screenshot gadgets-preview.png
+```
+
+Gap-enabled screenshots wait up to six seconds for the demo passage history;
+shorter timed runs capture earlier. The deterministic demo settles at `~5.0 s`
+ahead and `~2.3 s` behind.
+
 ## Run
 
 From this folder:
@@ -35,20 +93,20 @@ cargo run
 
 The demo opens the control panel and an animated overlay without opening any
 network sockets. Live mode opens the control panel and connects to the local LFS
-client. Enable **Show overlay** when ready. **Position mode** adds a normal
-border/title bar to the overlay; drag its title bar to move it. Turn position
+client. Enable **Show overlays** when ready. **Radar position mode** adds a normal
+border/title bar to the radar; drag its title bar to move it. Turn position
 mode off to restore the borderless, mouse click-through radar with a transparent
 background. Position mode retains the dark radar backing for placement; the
 control-panel preview also keeps its backing. The **Move radar**
 handle and **X/Y** controls in the control panel remain available as alternatives.
-**Overlay size** applies once dragging stops and the value has
+**Radar size** applies once dragging stops and the value has
 settled for 250 ms. **Side range (m)** changes the drawing scale immediately.
 Use **Save settings**
 to write openradar.local.toml. Use **Apply / reconnect** after changing live
 settings, including interpolation and detection range.
 
-Windows foreground detection hides the overlay when LFS.exe is not active,
-unless position mode is enabled. Keep the control panel open; closing it exits
+Windows foreground detection hides each overlay when LFS.exe is not active,
+unless that gadget's position mode is enabled. Keep the control panel open; closing it exits
 the radar and releases its sockets.
 
 Windows rendering uses DX12 with a DirectComposition visual swapchain for

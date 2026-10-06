@@ -1,7 +1,8 @@
-use super::window::OverlayWindow;
+use super::window::{GapWindow, OverlayWindow};
 use crate::{
-    config::Config,
+    config::{Config, GapSettings},
     demo::Demo,
+    gaps::GapValue,
     radar::{RadarFrame, Threat},
     runtime::{Runtime, Snapshot, SnapshotReader},
 };
@@ -40,8 +41,8 @@ pub fn run(
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_title("LFS OpenRadar · Control panel")
-            .with_inner_size([480.0, 700.0])
-            .with_min_inner_size([460.0, 660.0])
+            .with_inner_size([1020.0, 760.0])
+            .with_min_inner_size([380.0, 400.0])
             // eframe derives the shared painter's alpha support from the root
             // viewport, even when only a child needs a transparent background.
             // The control panel still paints its own opaque central frame.
@@ -92,6 +93,7 @@ struct App {
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
+    gap_overlays: [GapOverlay; 2],
 }
 
 #[derive(Clone)]
@@ -127,28 +129,53 @@ struct OverlayFeedback {
     closed: bool,
     panel_stall_reported: bool,
 }
+struct GapOverlay {
+    window: GapWindow,
+    data: Arc<Mutex<OverlayData>>,
+    feedback: Arc<Mutex<OverlayFeedback>>,
+    created: bool,
+    editing: bool,
+}
+impl GapOverlay {
+    fn new(settings: &GapSettings, data: &OverlayData) -> Self {
+        Self {
+            window: GapWindow::new(settings),
+            data: Arc::new(Mutex::new(data.clone())),
+            feedback: Arc::new(Mutex::new(OverlayFeedback::default())),
+            created: false,
+            editing: false,
+        }
+    }
+}
 impl App {
     fn new(
-        config: Config,
+        mut config: Config,
         config_path: PathBuf,
         demo: bool,
         seconds: Option<u64>,
         screenshot: Option<PathBuf>,
     ) -> Self {
+        config.prepare_gap_positions();
         let started = Instant::now();
+        let overlay_data = OverlayData {
+            source: if demo {
+                OverlaySource::Demo(Arc::new(Mutex::new(Demo::default())))
+            } else {
+                OverlaySource::Disconnected
+            },
+            config: config.clone(),
+            started,
+            control_painted_at: started,
+            visible: false,
+            editing: false,
+        };
+        let gap_overlays = [
+            GapOverlay::new(&config.gap_ahead, &overlay_data),
+            GapOverlay::new(&config.gap_behind, &overlay_data),
+        ];
         let mut app = Self {
-            overlay_data: Arc::new(Mutex::new(OverlayData {
-                source: if demo {
-                    OverlaySource::Demo(Arc::new(Mutex::new(Demo::default())))
-                } else {
-                    OverlaySource::Disconnected
-                },
-                config: config.clone(),
-                started,
-                control_painted_at: started,
-                visible: false,
-                editing: false,
-            })),
+            overlay_data: Arc::new(Mutex::new(overlay_data)),
+            gap_overlays,
             overlay_window: OverlayWindow::new(&config),
             overlay_feedback: Arc::new(Mutex::new(OverlayFeedback::default())),
             overlay_created: false,
@@ -172,22 +199,127 @@ impl App {
     }
     fn connect(&mut self) {
         // Drop joins the old worker and releases its UDP port before restarting.
-        self.overlay_data.lock().unwrap().source = OverlaySource::Disconnected;
+        self.set_source(OverlaySource::Disconnected);
         self.runtime = None;
         match Runtime::start_with_password(self.config.clone(), self.insim_password.clone()) {
             Ok(runtime) => {
-                self.overlay_data.lock().unwrap().source =
-                    OverlaySource::Live(runtime.snapshot_reader());
+                self.set_source(OverlaySource::Live(runtime.snapshot_reader()));
                 self.runtime = Some(runtime);
                 self.message = None;
             }
             Err(error) => self.message = Some(error),
         }
     }
+    fn set_source(&self, source: OverlaySource) {
+        self.overlay_data.lock().unwrap().source = source.clone();
+        for gap in &self.gap_overlays {
+            gap.data.lock().unwrap().source = source.clone();
+        }
+    }
+    fn receive_overlay_feedback(&mut self) {
+        if let Ok(mut feedback) = self.overlay_feedback.lock() {
+            if let Some(position) = feedback.moved_to.take() {
+                self.config.overlay_x = position.x;
+                self.config.overlay_y = position.y;
+            }
+            if feedback.closed {
+                self.config.radar_enabled = false;
+                self.edit_overlay = false;
+                feedback.closed = false;
+            }
+        }
+        for (gap, settings) in self
+            .gap_overlays
+            .iter_mut()
+            .zip([&mut self.config.gap_ahead, &mut self.config.gap_behind])
+        {
+            if let Ok(mut feedback) = gap.feedback.lock() {
+                if let Some(position) = feedback.moved_to.take() {
+                    settings.window_x = Some(position.x);
+                    settings.window_y = Some(position.y);
+                }
+                if feedback.closed {
+                    settings.enabled = false;
+                    gap.editing = false;
+                    feedback.closed = false;
+                }
+            }
+        }
+    }
+    fn show_gap_overlays(&mut self, ctx: &egui::Context, foreground: bool) {
+        for (index, gap) in self.gap_overlays.iter_mut().enumerate() {
+            let (kind, settings, id, title) = if index == 0 {
+                (
+                    Gadget::Ahead,
+                    &self.config.gap_ahead,
+                    "gap-ahead-overlay",
+                    "LFS OpenRadar · Gap ahead",
+                )
+            } else {
+                (
+                    Gadget::Behind,
+                    &self.config.gap_behind,
+                    "gap-behind-overlay",
+                    "LFS OpenRadar · Gap behind",
+                )
+            };
+            let visible = overlay_visible(
+                self.overlay_enabled,
+                settings.enabled,
+                gap.editing,
+                self.demo.is_some(),
+                self.config.hide_when_background,
+                foreground,
+            );
+            if gap.window.settle_scale(
+                settings.scale,
+                self.started.elapsed(),
+                ctx.input(|input| input.pointer.any_down()),
+            ) {
+                log::info!(target: "openradar_graphics", "Settled {id} scale {}", settings.scale);
+            }
+            gap.created |= visible;
+            if !gap.created {
+                continue;
+            }
+            let became_visible = {
+                let mut data = gap.data.lock().unwrap();
+                let became_visible = visible && !data.visible;
+                data.config = self.config.clone();
+                data.visible = visible;
+                data.editing = gap.editing;
+                data.control_painted_at = Instant::now();
+                became_visible
+            };
+            let data = gap.data.clone();
+            let feedback = gap.feedback.clone();
+            let id = ViewportId::from_hash_of(id);
+            ctx.show_viewport_deferred(
+                id,
+                gap.window.builder(title, visible, gap.editing),
+                move |child, _| {
+                    render_gap_overlay(child, &data, &feedback, kind);
+                },
+            );
+            if became_visible {
+                ctx.request_repaint_of(id);
+            }
+        }
+    }
     fn capture(&mut self, ctx: &egui::Context) {
+        let preview_delay: f32 = if self.config.gap_ahead.enabled || self.config.gap_behind.enabled
+        {
+            6.0
+        } else {
+            1.0
+        };
+        let preview_delay = preview_delay.min(
+            self.seconds
+                .map_or(6.0, |seconds| seconds.saturating_sub(2).max(1) as f32),
+        );
         if self.screenshot.is_some()
             && !self.screenshot_requested
-            && self.started.elapsed().as_secs_f32() > 1.0
+            && self.started.elapsed().as_secs_f32() > preview_delay
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             self.screenshot_requested = true;
@@ -218,6 +350,157 @@ impl App {
             }
         }
     }
+    fn gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        let spacing = 12.0;
+        let columns = grid_columns(ui.available_width(), 300.0, spacing);
+        let width = (ui.available_width() - spacing * (columns - 1) as f32) / columns as f32;
+        egui::Grid::new("gadget-cards")
+            .num_columns(columns)
+            .spacing([spacing, spacing])
+            .show(ui, |ui| {
+                for (index, gadget) in GADGETS.iter().enumerate() {
+                    ui.allocate_ui_with_layout(
+                        // egui centers cells vertically; reserve the full card
+                        // height so a zero-height allocation cannot add a gap.
+                        Vec2::new(width, 354.0),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            egui::Frame::new()
+                                .fill(Color32::from_rgb(20, 29, 43))
+                                .corner_radius(8)
+                                .inner_margin(12.0)
+                                .show(ui, |ui| {
+                                    ui.set_width((width - 24.0).max(1.0));
+                                    ui.set_min_height(330.0);
+                                    ui.heading(gadget.title());
+                                    ui.add_space(6.0);
+                                    match gadget {
+                                        Gadget::Radar => {
+                                            ui.checkbox(&mut self.config.radar_enabled, "Enabled");
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                Vec2::new(ui.available_width(), 220.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            paint(
+                                                ui.painter(),
+                                                rect,
+                                                &snapshot.frame,
+                                                &self.config,
+                                                true,
+                                            );
+                                            ui.add(
+                                                egui::Slider::new(
+                                                    &mut self.config.side_m,
+                                                    3.0..=12.0,
+                                                )
+                                                .text("Side range (m)"),
+                                            );
+                                        }
+                                        Gadget::Ahead | Gadget::Behind => {
+                                            let (settings, value, gap) = if *gadget == Gadget::Ahead
+                                            {
+                                                (
+                                                    &mut self.config.gap_ahead,
+                                                    &snapshot.gaps.ahead,
+                                                    &mut self.gap_overlays[0],
+                                                )
+                                            } else {
+                                                (
+                                                    &mut self.config.gap_behind,
+                                                    &snapshot.gaps.behind,
+                                                    &mut self.gap_overlays[1],
+                                                )
+                                            };
+                                            ui.checkbox(&mut settings.enabled, "Enabled");
+                                            ui.add_space(16.0);
+                                            ui.label(
+                                                egui::RichText::new(gap_text(value))
+                                                    .size(28.0)
+                                                    .color(Color32::from_rgb(92, 204, 222)),
+                                            );
+                                            ui.label(gap_driver(value));
+                                            ui.label(&value.status);
+                                            if let Some(age) = value.measured_age_ms {
+                                                ui.label(format!(
+                                                    "Measured {:.1} s ago",
+                                                    age as f64 / 1000.0
+                                                ));
+                                            }
+                                            ui.add_space(16.0);
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    "Drag this gadget's title bar to move it.",
+                                                )
+                                                .small(),
+                                            );
+                                            gap_position_controls(
+                                                ui,
+                                                settings,
+                                                &mut gap.window,
+                                                gap.editing,
+                                            );
+                                            ui.add(
+                                                egui::Slider::new(&mut settings.scale, 0.5..=2.0)
+                                                    .text("Scale"),
+                                            );
+                                        }
+                                    }
+                                });
+                        },
+                    );
+                    if (index + 1) % columns == 0 {
+                        ui.end_row();
+                    }
+                }
+            });
+    }
+}
+
+// Registry order is insertion order. Appending a gadget fills the next cell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Gadget {
+    Radar,
+    Ahead,
+    Behind,
+}
+const GADGETS: &[Gadget] = &[Gadget::Radar, Gadget::Ahead, Gadget::Behind];
+impl Gadget {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Radar => "Radar",
+            Self::Ahead => "Gap ahead",
+            Self::Behind => "Gap behind",
+        }
+    }
+}
+fn grid_columns(width: f32, card_width: f32, spacing: f32) -> usize {
+    (((width + spacing) / (card_width + spacing)).floor() as usize).max(1)
+}
+fn overlay_visible(
+    master: bool,
+    enabled: bool,
+    editing: bool,
+    demo: bool,
+    hide_in_background: bool,
+    foreground: bool,
+) -> bool {
+    master && enabled && (editing || demo || !hide_in_background || foreground)
+}
+fn gap_text(value: &GapValue) -> String {
+    if let Some(laps) = value.laps {
+        format!("{laps} lap{}", if laps == 1 { "" } else { "s" })
+    } else if let Some(seconds) = value.seconds {
+        format!("~{seconds:.1} s")
+    } else {
+        "—".into()
+    }
+}
+fn gap_driver(value: &GapValue) -> String {
+    match (&value.driver, value.position) {
+        (Some(name), Some(position)) => format!("P{position} · {name}"),
+        _ => "—".into(),
+    }
 }
 impl eframe::App for App {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
@@ -225,18 +508,7 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        if let Ok(mut feedback) = self.overlay_feedback.lock() {
-            if let Some(position) = feedback.moved_to.take() {
-                // Save the observed position, without commanding an OS move
-                // back to it during the next frame.
-                self.config.overlay_x = position.x;
-                self.config.overlay_y = position.y;
-            }
-            if feedback.closed {
-                self.overlay_enabled = false;
-                feedback.closed = false;
-            }
-        }
+        self.receive_overlay_feedback();
         let now = self.started.elapsed().as_millis() as u64;
         let snapshot = if let Some(demo) = &mut self.demo {
             demo.snapshot(now, &self.config)
@@ -253,6 +525,7 @@ impl eframe::App for App {
                     .inner_margin(20.0),
             )
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("LFS OpenRadar");
                 ui.label(
                     egui::RichText::new(if self.demo.is_some() {
@@ -278,11 +551,7 @@ impl eframe::App for App {
                     }
                 });
                 ui.add_space(6.0);
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 280.0),
-                    egui::Sense::hover(),
-                );
-                paint(ui.painter(), rect, &snapshot.frame, &self.config, true);
+                self.gadget_cards(ui, &snapshot);
                 ui.add_space(8.0);
                 if self.demo.is_none() {
                     ui.horizontal(|ui| {
@@ -301,10 +570,10 @@ impl eframe::App for App {
                     );
                 }
                 ui.horizontal(|ui| {
-                    if ui.checkbox(&mut self.overlay_enabled, "Show overlay").changed() {
+                    if ui.checkbox(&mut self.overlay_enabled, "Show overlays").changed() {
                         log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
                     }
-                    if ui.checkbox(&mut self.edit_overlay, "Position mode").changed() {
+                    if ui.checkbox(&mut self.edit_overlay, "Radar position mode").changed() {
                         log::info!(target: "openradar_graphics", "Position mode {}", self.edit_overlay);
                     }
                 });
@@ -327,10 +596,7 @@ impl eframe::App for App {
                 position_controls(ui, &mut self.config, &mut self.overlay_window, self.edit_overlay);
                 ui.add(
                     egui::Slider::new(&mut self.config.overlay_size, 220.0..=800.0)
-                        .text("Overlay size"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut self.config.side_m, 3.0..=12.0).text("Side range (m)"),
+                        .text("Radar size"),
                 );
                 ui.add(
                     egui::Slider::new(&mut self.config.interpolation_ms, 0..=200)
@@ -363,13 +629,17 @@ impl eframe::App for App {
                 if let Some(message) = self.message.as_ref().or(snapshot.error.as_ref()) {
                     ui.colored_label(Color32::from_rgb(255, 180, 120), message);
                 }
+                });
             });
         let foreground = super::game_foreground().unwrap_or(true);
-        let show_overlay = self.overlay_enabled
-            && (self.edit_overlay
-                || self.demo.is_some()
-                || !self.config.hide_when_background
-                || foreground);
+        let show_overlay = overlay_visible(
+            self.overlay_enabled,
+            self.config.radar_enabled,
+            self.edit_overlay,
+            self.demo.is_some(),
+            self.config.hide_when_background,
+            foreground,
+        );
         if self.overlay_window.settle_size(
             self.config.overlay_size,
             self.started.elapsed(),
@@ -403,6 +673,7 @@ impl eframe::App for App {
                 ctx.request_repaint_of(overlay_id);
             }
         }
+        self.show_gap_overlays(ctx, foreground);
         self.capture(ctx);
         if self
             .seconds
@@ -440,6 +711,36 @@ fn render_overlay(
                 data.editing,
             );
         });
+    overlay_painted(child, &data, feedback);
+}
+
+fn render_gap_overlay(
+    child: &egui::Context,
+    data: &Mutex<OverlayData>,
+    feedback: &Mutex<OverlayFeedback>,
+    kind: Gadget,
+) {
+    let data = data.lock().unwrap().clone();
+    if !data.visible {
+        return;
+    }
+    let snapshot = data
+        .source
+        .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
+    let (title, value, settings) = if kind == Gadget::Ahead {
+        ("AHEAD", &snapshot.gaps.ahead, &data.config.gap_ahead)
+    } else {
+        ("BEHIND", &snapshot.gaps.behind, &data.config.gap_behind)
+    };
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show(child, |ui| {
+            paint_gap(ui.painter(), ui.max_rect(), title, value, settings);
+        });
+    overlay_painted(child, &data, feedback);
+}
+
+fn overlay_painted(child: &egui::Context, data: &OverlayData, feedback: &Mutex<OverlayFeedback>) {
     if let Ok(mut feedback) = feedback.lock() {
         let panel_age = data.control_painted_at.elapsed();
         let stalled = panel_age >= Duration::from_secs(5);
@@ -458,9 +759,96 @@ fn render_overlay(
         if child.input(|i| i.viewport().close_requested()) {
             feedback.closed = true;
             child.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            child.request_repaint_of(ViewportId::ROOT);
         }
     }
     child.request_repaint_after(Duration::from_millis(16));
+}
+
+fn paint_gap(
+    painter: &egui::Painter,
+    canvas: Rect,
+    title: &str,
+    value: &GapValue,
+    settings: &GapSettings,
+) {
+    let scale = settings
+        .scale
+        .min(canvas.width() / 230.0)
+        .min(canvas.height() / 76.0);
+    let size = Vec2::new(230.0, 76.0) * scale;
+    let rect = Rect::from_center_size(canvas.center(), size);
+    painter.rect_filled(
+        rect,
+        6.0 * scale,
+        Color32::from_rgba_unmultiplied(12, 18, 28, 210),
+    );
+    painter.text(
+        Pos2::new(rect.left() + 8.0 * scale, rect.top() + 7.0 * scale),
+        Align2::LEFT_TOP,
+        format!("{title}  {}", gap_text(value)),
+        FontId::proportional(20.0 * scale),
+        Color32::from_rgb(92, 204, 222),
+    );
+    painter.text(
+        Pos2::new(rect.left() + 8.0 * scale, rect.top() + 32.0 * scale),
+        Align2::LEFT_TOP,
+        clipped_text(&gap_driver(value), 28),
+        FontId::proportional(13.0 * scale),
+        Color32::WHITE,
+    );
+    let status = value
+        .measured_age_ms
+        .map(|age| format!("ESTIMATE · {:.1} s ago", age as f64 / 1000.0))
+        .unwrap_or_else(|| clipped_text(&value.status, 32));
+    painter.text(
+        Pos2::new(rect.left() + 8.0 * scale, rect.top() + 53.0 * scale),
+        Align2::LEFT_TOP,
+        status,
+        FontId::proportional(10.0 * scale),
+        Color32::GRAY,
+    );
+}
+fn clipped_text(text: &str, limit: usize) -> String {
+    if text.chars().count() > limit {
+        format!("{}…", text.chars().take(limit - 1).collect::<String>())
+    } else {
+        text.into()
+    }
+}
+
+fn gap_position_controls(
+    ui: &mut egui::Ui,
+    settings: &mut GapSettings,
+    window: &mut GapWindow,
+    editing: bool,
+) {
+    ui.horizontal(|ui| {
+        let x = ui.add(
+            egui::DragValue::new(settings.window_x.get_or_insert(0.0))
+                .prefix("X ")
+                .range(-32000.0..=32000.0),
+        );
+        let y = ui.add(
+            egui::DragValue::new(settings.window_y.get_or_insert(0.0))
+                .prefix("Y ")
+                .range(-32000.0..=32000.0),
+        );
+        if x.changed() || y.changed() {
+            window.set_position(settings);
+        }
+    });
+    if editing {
+        let drag = ui
+            .add(egui::Button::new("Move gadget").sense(egui::Sense::drag()))
+            .on_hover_cursor(egui::CursorIcon::Grab);
+        let delta = drag.drag_delta();
+        if delta != Vec2::ZERO {
+            *settings.window_x.get_or_insert(0.0) += delta.x;
+            *settings.window_y.get_or_insert(0.0) += delta.y;
+            window.set_position(settings);
+        }
+    }
 }
 
 fn position_controls(
@@ -648,6 +1036,260 @@ fn draw_car(
 mod tests {
     use super::*;
     use crate::radar::RadarCar;
+
+    #[test]
+    fn cards_wrap_left_to_right_and_reflow_when_resized() {
+        let ctx = egui::Context::default();
+        let mut app = App::new(
+            Config::default(),
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        let snapshot = Demo::default().snapshot(7_000, &app.config);
+        for (width, expected_columns) in [(340.0, 1), (680.0, 2), (1020.0, 3), (340.0, 1)] {
+            let mut output = egui::FullOutput::default();
+            // Give egui's remembered grid measurements time to settle after reflow.
+            for _ in 0..3 {
+                output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(width, 1500.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            app.gadget_cards(ui, &snapshot);
+                        });
+                    },
+                );
+            }
+            let cards: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Rect(rect) if rect.fill == Color32::from_rgb(20, 29, 43) => {
+                        Some(rect.rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(cards.len(), 3);
+            assert!(
+                cards[0].top() < 20.0,
+                "unexpected space before first row: {cards:?}"
+            );
+            for (index, card) in cards.iter().enumerate() {
+                assert!(card.right() <= width + 0.1, "card exceeds width: {cards:?}");
+                if index % expected_columns == 0 {
+                    assert!((card.left() - cards[0].left()).abs() < 0.1);
+                }
+                if index > 0 {
+                    if index % expected_columns == 0 {
+                        assert!(card.top() > cards[index - 1].bottom());
+                    } else {
+                        assert!(card.left() > cards[index - 1].right());
+                        assert!((card.top() - cards[index - 1].top()).abs() < 0.1);
+                    }
+                }
+            }
+        }
+        assert_eq!(grid_columns(611.9, 300.0, 12.0), 1);
+        assert_eq!(grid_columns(612.0, 300.0, 12.0), 2);
+    }
+
+    #[test]
+    fn gap_panels_fit_their_own_viewport_at_extreme_scales() {
+        let ctx = egui::Context::default();
+        let value = GapValue {
+            seconds: Some(5.0),
+            ..Default::default()
+        };
+        for size in [220.0, 800.0] {
+            for scale in [2.0, 0.5] {
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(size))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::NONE)
+                            .show(ctx, |ui| {
+                                paint_gap(
+                                    ui.painter(),
+                                    ui.max_rect(),
+                                    "AHEAD",
+                                    &value,
+                                    &GapSettings {
+                                        enabled: true,
+                                        scale,
+                                        ..Default::default()
+                                    },
+                                );
+                            });
+                    },
+                );
+                for shape in output.shapes {
+                    if let Shape::Rect(rect) = shape.shape {
+                        assert!(rect.rect.left() >= 0.0 && rect.rect.top() >= 0.0);
+                        assert!(rect.rect.right() <= size && rect.rect.bottom() <= size);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gap_windows_register_independently_and_feedback_does_not_move_or_close_neighbors() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut config = Config {
+            radar_enabled: false,
+            ..Default::default()
+        };
+        config.gap_ahead.enabled = true;
+        config.gap_behind.enabled = true;
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        app.gap_overlays[0].editing = true;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        let ahead_id = ViewportId::from_hash_of("gap-ahead-overlay");
+        let behind_id = ViewportId::from_hash_of("gap-behind-overlay");
+        assert!(
+            !output
+                .viewport_output
+                .contains_key(&ViewportId::from_hash_of("radar-overlay"))
+        );
+        assert!(output.viewport_output[&ahead_id].viewport_ui_cb.is_some());
+        assert!(output.viewport_output[&behind_id].viewport_ui_cb.is_some());
+        assert_eq!(
+            output.viewport_output[&ahead_id].builder.decorations,
+            Some(true)
+        );
+        assert_eq!(
+            output.viewport_output[&behind_id].builder.decorations,
+            Some(false)
+        );
+        let initial_behind = output.viewport_output[&behind_id].builder.clone();
+        let mut initial_ahead = output.viewport_output[&ahead_id].builder.clone();
+        app.gap_overlays[0].feedback.lock().unwrap().moved_to = Some(Pos2::new(-900.0, 350.0));
+        app.receive_overlay_feedback();
+        assert_eq!(app.config.gap_ahead.window_x, Some(-900.0));
+        // An observed OS drag is saved, without a native move feedback loop.
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        assert!(
+            initial_ahead
+                .patch(output.viewport_output[&ahead_id].builder.clone())
+                .0
+                .is_empty()
+        );
+        assert_eq!(
+            output.viewport_output[&behind_id].builder.position,
+            initial_behind.position
+        );
+        app.gap_overlays[0].feedback.lock().unwrap().closed = true;
+        app.receive_overlay_feedback();
+        assert!(!app.config.gap_ahead.enabled);
+        assert!(app.config.gap_behind.enabled);
+        assert!(app.overlay_enabled);
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        assert_eq!(
+            output.viewport_output[&ahead_id].builder.visible,
+            Some(false)
+        );
+        assert_eq!(
+            output.viewport_output[&behind_id].builder.visible,
+            Some(true)
+        );
+        // Retain the hidden window and callback for reuse.
+        assert!(output.viewport_output[&ahead_id].viewport_ui_cb.is_some());
+    }
+
+    #[test]
+    fn separate_gap_callbacks_refresh_without_the_panel_or_radar() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut config = Config {
+            radar_enabled: false,
+            ..Default::default()
+        };
+        config.gap_ahead.enabled = true;
+        config.gap_behind.enabled = true;
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        // Use the same deterministic telemetry source for both independent windows.
+        app.set_source(OverlaySource::Disconnected);
+        for gap in &app.gap_overlays {
+            gap.data.lock().unwrap().started = Instant::now() - Duration::from_secs(7);
+        }
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
+        let callbacks: Vec<_> = ["gap-ahead-overlay", "gap-behind-overlay"]
+            .iter()
+            .map(|name| {
+                let id = ViewportId::from_hash_of(name);
+                (
+                    id,
+                    output.viewport_output[&id].viewport_ui_cb.clone().unwrap(),
+                )
+            })
+            .collect();
+        let draw = |id, callback: &egui::DeferredViewportUiCallback| {
+            let mut input = egui::RawInput {
+                viewport_id: id,
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 76.0))),
+                ..Default::default()
+            };
+            input.viewports.insert(
+                id,
+                egui::ViewportInfo {
+                    parent: Some(ViewportId::ROOT),
+                    ..Default::default()
+                },
+            );
+            ctx.run(input, |child| callback(child))
+        };
+        let text_present = |output: &egui::FullOutput, expected: &str| {
+            output.shapes.iter().any(|shape| {
+            matches!(&shape.shape, Shape::Text(text) if text.galley.job.text == expected)
+        })
+        };
+        assert!(text_present(
+            &draw(callbacks[0].0, callbacks[0].1.as_ref()),
+            "AHEAD  —"
+        ));
+        app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
+        for ((id, callback), expected) in callbacks.iter().zip(["AHEAD  ~5.0 s", "BEHIND  ~2.3 s"])
+        {
+            let output = draw(*id, callback.as_ref());
+            assert!(text_present(&output, expected));
+            assert!(output.viewport_output[id].repaint_delay <= Duration::from_millis(16));
+        }
+        app.set_source(OverlaySource::Disconnected);
+        assert!(text_present(
+            &draw(callbacks[1].0, callbacks[1].1.as_ref()),
+            "BEHIND  —"
+        ));
+        assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
+    }
+
+    #[test]
+    fn each_position_mode_overrides_background_hiding_for_only_its_window() {
+        assert!(!overlay_visible(true, true, false, false, true, false));
+        assert!(overlay_visible(true, true, true, false, true, false));
+        assert!(!overlay_visible(true, false, true, false, true, true));
+        assert!(!overlay_visible(false, true, true, false, true, true));
+    }
 
     #[test]
     fn panel_drag_fallback_preserves_clicks_without_a_native_drag_loop() {

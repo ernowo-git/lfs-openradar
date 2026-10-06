@@ -43,9 +43,12 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
         version[4..8].copy_from_slice(b"0.7G");
         version[18] = 9;
         tcp.write_all(&version).unwrap();
-        let mut requests = [0; 12];
+        let mut requests = [0; 16];
         tcp.read_exact(&mut requests).unwrap();
-        assert_eq!(&requests, &[1, 3, 1, 13, 1, 3, 1, 14, 1, 3, 1, 7]);
+        assert_eq!(
+            &requests,
+            &[1, 3, 1, 13, 1, 3, 1, 14, 1, 3, 1, 7, 1, 3, 1, 19]
+        );
         for (id, kind) in [(1, 0), (2, 6)] {
             let mut npl = packet(21, 76);
             npl[3] = id;
@@ -60,10 +63,19 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
         state[11] = 1;
         state[20..23].copy_from_slice(b"BL1");
         tcp.write_all(&state).unwrap();
+        let mut track = packet(17, 28);
+        track[2] = 1;
+        track[4] = 10;
+        track[7] = 0x40;
+        track[8..11].copy_from_slice(b"BL1");
+        track[18..20].copy_from_slice(&1000_u16.to_le_bytes());
+        tcp.write_all(&track).unwrap();
         let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut time = 20;
         while !stop.load(Ordering::Relaxed) {
-            let mci = mci(&[1, 2], true, true);
+            let mut mci = mci(&[1, 2], true, true);
+            mci[9] = 1;
+            mci[37] = 2;
             // Deliberately split the TCP packet header across writes.
             if tcp.write_all(&mci[..2]).is_err() {
                 break;
@@ -94,12 +106,16 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
     assert_eq!(live.frame.cars.len(), 1);
     assert_eq!(live.version, "0.7G");
     assert_eq!(live.malformed_packets, 0);
+    assert_eq!(live.gaps.ahead.status, "No driver");
+    assert_eq!(live.gaps.behind.position, Some(2));
+    assert_eq!(live.gaps.behind.status, "Building passage history");
     outsim_enabled.store(false, Ordering::Relaxed);
     thread::sleep(Duration::from_millis(350));
     let paused = overlay_reader.snapshot();
     assert!(paused.connected);
     assert!(!paused.frame.live);
     assert!(paused.frame.status.contains("stale"));
+    assert!(paused.gaps.ahead.seconds.is_none() && paused.gaps.behind.seconds.is_none());
     server_stop.store(true, Ordering::Relaxed);
     drop(runtime);
     server.join().unwrap();

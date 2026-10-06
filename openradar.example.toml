@@ -18,3 +18,17 @@ overlay_x = 40.0
 overlay_y = 160.0
 overlay_size = 320.0
 hide_when_background = true
+radar_enabled = true
+
+# Each gap has its own overlay window. Positions are logical screen pixels.
+[gap_ahead]
+enabled = false
+window_x = 376.0
+window_y = 160.0
+scale = 1.0
+
+[gap_behind]
+enabled = false
+window_x = 376.0
+window_y = 260.0
+scale = 1.0

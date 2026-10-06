@@ -19,13 +19,56 @@ fn tcp_fragments_and_coalesced_packets() {
 }
 #[test]
 fn mci_units_and_signed_coordinates() {
-    let Packet::Mci(cars) = insim::decode(&mci(&[7], true, true)).unwrap() else {
+    let mut bytes = mci(&[7], true, true);
+    bytes[4..6].copy_from_slice(&345_u16.to_le_bytes());
+    bytes[6..8].copy_from_slice(&12_u16.to_le_bytes());
+    bytes[9] = 4;
+    let Packet::Mci(cars) = insim::decode(&bytes).unwrap() else {
         panic!()
     };
     assert_eq!(cars[0].pose.x, -1.0);
+    assert_eq!((cars[0].node, cars[0].lap, cars[0].position), (345, 12, 4));
     assert_eq!(cars[0].pose.y, 2.0);
     assert_eq!(cars[0].speed_mps, 100.0);
     assert!((cars[0].pose.heading - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+}
+#[test]
+fn race_start_track_metadata_is_validated_and_preserved() {
+    let mut bytes = packet(17, 28);
+    bytes[2] = 1;
+    bytes[4] = 10;
+    bytes[7] = 0x41;
+    bytes[8..12].copy_from_slice(b"BL1R");
+    bytes[18..20].copy_from_slice(&800_u16.to_le_bytes());
+    bytes[20..22].copy_from_slice(&100_u16.to_le_bytes());
+    let Packet::RaceStart { info, requested } = insim::decode(&bytes).unwrap() else {
+        panic!()
+    };
+    assert!(requested);
+    assert!(info.supports_gaps());
+    assert_eq!(info.track, "BL1R");
+    assert_eq!((info.nodes, info.finish, info.race_laps), (800, 100, 10));
+    assert!(insim::decode(&packet(17, 4)).is_err());
+}
+#[test]
+fn driver_names_ignore_color_codes_and_preserve_text() {
+    for (name, expected) in [
+        ("^3Mas ^7Verstappen", "Mas Verstappen"),
+        ("^0^1^2^3^4^5^6^7^8^9Max", "Max"),
+        ("^2José ^7林", "José 林"),
+        ("Max^", "Max^"),
+        ("^Max ^x Driver", "^Max ^x Driver"),
+        ("Plain Driver", "Plain Driver"),
+    ] {
+        let mut bytes = packet(21, 76);
+        bytes[3] = 7;
+        bytes[73] = 1;
+        bytes[8..8 + name.len()].copy_from_slice(name.as_bytes());
+        let Packet::Player(player) = insim::decode(&bytes).unwrap() else {
+            panic!()
+        };
+        assert_eq!(player.name, expected);
+    }
 }
 #[test]
 fn sets_of_17_and_48_cars_are_atomic() {

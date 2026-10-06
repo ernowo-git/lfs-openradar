@@ -2,7 +2,7 @@
 use crate::{
     config::Config,
     lfs::{
-        insim::{Car, Packet, Player, State},
+        insim::{Car, Packet, Player, State, TrackInfo},
         outsim::Sample,
     },
     radar::{Engine, Pose},
@@ -21,6 +21,8 @@ impl Default for Demo {
             (2, "LEFT", 2),
             (3, "AHEAD", 6),
             (4, "RIGHT", 6),
+            (5, "Driver A", 6),
+            (6, "Driver B", 6),
         ] {
             engine
                 .packet(
@@ -47,6 +49,21 @@ impl Default for Demo {
                 0,
             )
             .unwrap();
+        engine
+            .packet(
+                Packet::RaceStart {
+                    info: TrackInfo {
+                        track: "DEMO".into(),
+                        nodes: 1000,
+                        finish: 0,
+                        timing: 0x40,
+                        race_laps: 10,
+                    },
+                    requested: false,
+                },
+                0,
+            )
+            .unwrap();
         Self {
             engine,
             next_tick: 0,
@@ -67,6 +84,9 @@ impl Demo {
             };
             let (sin, cos) = heading.sin_cos();
             let mut cars = vec![Car {
+                node: (tick / 100 % 1000) as u16,
+                lap: (tick / 100_000 + 1) as u16,
+                position: 2,
                 plid: 1,
                 info: 64,
                 pose: me,
@@ -79,6 +99,9 @@ impl Demo {
                 (4, 3.0, -4.0 + 2.0 * (seconds * 0.5).sin(), 0.15),
             ] {
                 cars.push(Car {
+                    node: (tick / 100 % 1000) as u16,
+                    lap: (tick / 100_000 + 1) as u16,
+                    position: 0,
                     plid,
                     info: if plid == 4 { 128 } else { 0 },
                     pose: Pose {
@@ -91,6 +114,24 @@ impl Demo {
                     direction: heading,
                 });
             }
+            // Separate race-order neighbors from the nearby radar cars.
+            for (plid, offset, position) in [(5, 5_000_i64, 1), (6, -2_300_i64, 3)] {
+                let progress_time = (tick as i64 + 100_000 + offset) as u64;
+                cars.push(Car {
+                    node: (progress_time / 100 % 1000) as u16,
+                    lap: (progress_time / 100_000) as u16,
+                    position,
+                    plid,
+                    info: if plid == 6 { 128 } else { 0 },
+                    pose: Pose {
+                        y: me.y + offset as f64 * 0.015,
+                        ..me
+                    },
+                    speed_mps: 15.0,
+                    direction: heading,
+                });
+            }
+            cars.iter_mut().find(|c| c.plid == 4).unwrap().info = 0;
             self.engine.packet(Packet::Mci(cars), tick).unwrap();
             self.engine.outsim(
                 Sample {
@@ -105,6 +146,7 @@ impl Demo {
         let mut frame = self.engine.frame(now, config);
         frame.status = format!("DEMO · {}", frame.status);
         Snapshot {
+            gaps: self.engine.gaps(now, config, &frame),
             connected: true,
             version: "synthetic".into(),
             frame,
