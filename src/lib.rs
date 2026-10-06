@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod demo;
+pub mod gaps;
 pub mod lfs;
 pub mod overlay;
 pub mod radar;

@@ -1,8 +1,82 @@
-use crate::config::Config;
-use eframe::egui::{Pos2, ViewportBuilder, WindowLevel};
+use crate::config::{Config, GapSettings};
+use eframe::egui::{Pos2, Vec2, ViewportBuilder, WindowLevel};
 use std::time::Duration;
 
 const RESIZE_SETTLE: Duration = Duration::from_millis(250);
+
+/// Each gap owns geometry and a resize debounce independent of the radar.
+pub(super) struct GapWindow {
+    position: Pos2,
+    scale: f32,
+    pending_scale: Option<(f32, Duration)>,
+}
+impl GapWindow {
+    pub fn new(settings: &GapSettings) -> Self {
+        Self {
+            position: Pos2::new(
+                settings.window_x.unwrap_or(0.0),
+                settings.window_y.unwrap_or(0.0),
+            ),
+            scale: settings.scale,
+            pending_scale: None,
+        }
+    }
+    pub fn set_position(&mut self, settings: &GapSettings) {
+        self.position = Pos2::new(
+            settings.window_x.unwrap_or(0.0),
+            settings.window_y.unwrap_or(0.0),
+        );
+    }
+    pub fn settle_scale(&mut self, requested: f32, now: Duration, pointer_down: bool) -> bool {
+        if requested == self.scale {
+            self.pending_scale = None;
+            return false;
+        }
+        if self
+            .pending_scale
+            .is_none_or(|(scale, _)| scale != requested)
+        {
+            self.pending_scale = Some((requested, now));
+        }
+        let (_, changed_at) = self.pending_scale.unwrap();
+        if !pointer_down && now.saturating_sub(changed_at) >= RESIZE_SETTLE {
+            self.scale = requested;
+            self.pending_scale = None;
+            return true;
+        }
+        false
+    }
+    pub fn builder(&self, title: &str, visible: bool, editing: bool) -> ViewportBuilder {
+        native_builder(
+            title,
+            self.position,
+            Vec2::new(230.0, 76.0) * self.scale,
+            visible,
+            editing,
+        )
+    }
+}
+
+fn native_builder(
+    title: &str,
+    position: Pos2,
+    size: Vec2,
+    visible: bool,
+    editing: bool,
+) -> ViewportBuilder {
+    ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size(size)
+        .with_position(position)
+        .with_transparent(true)
+        .with_decorations(editing)
+        .with_resizable(false)
+        .with_active(false)
+        .with_taskbar(false)
+        .with_window_level(WindowLevel::AlwaysOnTop)
+        .with_mouse_passthrough(!editing)
+        .with_visible(visible)
+}
 
 /// Only explicit control-panel edits change the requested native position.
 /// Observed OS positions belong in Config, never fed back into this builder.
@@ -46,20 +120,13 @@ impl OverlayWindow {
     }
 
     pub fn builder(&self, visible: bool, editing: bool) -> ViewportBuilder {
-        ViewportBuilder::default()
-            .with_title("LFS OpenRadar")
-            .with_inner_size([self.size; 2])
-            .with_position(self.position)
-            .with_transparent(true)
-            // Use the OS title bar for direct positioning. No custom/native
-            // StartDrag command is injected from the overlay render callback.
-            .with_decorations(editing)
-            .with_resizable(false)
-            .with_active(false)
-            .with_taskbar(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_mouse_passthrough(!editing)
-            .with_visible(visible)
+        native_builder(
+            "LFS OpenRadar · Radar",
+            self.position,
+            Vec2::splat(self.size),
+            visible,
+            editing,
+        )
     }
 }
 
@@ -67,6 +134,63 @@ impl OverlayWindow {
 mod tests {
     use super::*;
     use eframe::egui::ViewportCommand;
+
+    #[test]
+    fn gap_windows_keep_geometry_independent_and_debounce_only_their_own_scale() {
+        let mut config = Config::default();
+        config.prepare_gap_positions();
+        let mut ahead = GapWindow::new(&config.gap_ahead);
+        let behind = GapWindow::new(&config.gap_behind);
+        let mut native_ahead = ahead.builder("Ahead", true, false);
+        let mut native_behind = behind.builder("Behind", true, false);
+        config.gap_ahead.window_x = Some(-1600.0);
+        config.gap_ahead.window_y = Some(500.0);
+        ahead.set_position(&config.gap_ahead);
+        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", true, false));
+        assert!(matches!(
+            commands.as_slice(),
+            [ViewportCommand::OuterPosition(_)]
+        ));
+        assert!(!recreate);
+        assert!(
+            native_behind
+                .patch(behind.builder("Behind", true, false))
+                .0
+                .is_empty()
+        );
+        assert!(!ahead.settle_scale(2.0, Duration::ZERO, true));
+        assert!(!ahead.settle_scale(2.0, Duration::from_secs(1), true));
+        assert!(
+            native_ahead
+                .patch(ahead.builder("Ahead", true, false))
+                .0
+                .is_empty()
+        );
+        assert!(ahead.settle_scale(2.0, Duration::from_secs(1), false));
+        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", true, false));
+        assert!(matches!(
+            commands.as_slice(),
+            [ViewportCommand::InnerSize(_)]
+        ));
+        assert!(!recreate);
+        assert_eq!(native_ahead.inner_size, Some(Vec2::new(460.0, 152.0)));
+        assert_eq!(native_behind.inner_size, Some(Vec2::new(230.0, 76.0)));
+        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", true, true));
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                ViewportCommand::Decorations(true),
+                ViewportCommand::MousePassthrough(false)
+            ]
+        ));
+        assert!(!recreate);
+        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", false, true));
+        assert!(matches!(
+            commands.as_slice(),
+            [ViewportCommand::Visible(false)]
+        ));
+        assert!(!recreate);
+    }
 
     #[test]
     fn slider_drag_does_not_resize_until_settled_and_released() {

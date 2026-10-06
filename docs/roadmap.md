@@ -92,11 +92,26 @@ or zero RPM. Clear live values on disconnect or driver changes; keep deliberatel
 historical results visibly distinct from live measurements.
 
 The overlay host owns transparency, placement, foreground visibility, DPI,
-position mode, and repaint scheduling. Begin with one shared overlay surface and
-multiple movable widget regions, reducing additional GPU surfaces. Prototype
-whether a bounding canvas preserves useful placement on multiple monitors;
-independent widget windows require their own stability and performance gate.
-Retain the working radar-only layout as the default during migration.
+position mode, and repaint scheduling. Radar, Gap ahead, and Gap behind use
+independent native overlay windows so each can be positioned freely on the
+desktop. Each owns its saved geometry, enable state, positioning mode, resize
+debounce, and repaint timer while sharing the telemetry runtime. Hide/show keeps
+each window and graphics surface registered rather than recreating them.
+Retain the working radar-only layout as the default during migration. Native
+multi-window stability, DPI, monitor transitions, and live driving remain
+acceptance targets as more gadgets are added.
+
+The control panel presents built-in gadgets as cards in a responsive grid.
+Cards follow a stable insertion order, filling each row from left to right.
+A newly added gadget occupies the next space to the right; when another card
+cannot fit within the available window width, it starts the next row at the
+left. Resizing the control panel recalculates the column count while preserving
+card order. Use consistent card widths, top-aligned rows, and spacing; narrow
+windows fall back to one column, and extra rows remain accessible through
+vertical scrolling. Each card contains its gadget preview, enabled state, and
+gadget-specific controls. Connection, global overlay controls, and save actions
+stay outside the card grid. This control-panel arrangement is independent of
+the gadgets' saved native window positions over the game.
 
 Save versioned TOML settings with widget IDs, enabled state, position, size,
 units, style, and widget-specific options. Migrate existing radar settings without
@@ -104,6 +119,17 @@ losing placement or ranges. Add layout profiles and import/export once the base
 format is stable; exclude passwords from persisted or exported settings.
 
 ## Delivery milestones
+
+The next planned release is **v0.2**, containing the feature work below with
+Windows x64 and experimental native Linux x64/X11 downloads. See the
+[release plan](release-v0.2.md) for build, packaging, and acceptance gates.
+
+Feature branch `codex/live-gap-gadgets` implements the control-panel wrapping
+card grid and the first common-node race-order gap estimates, including saved
+enable/position/scale settings, separate radar/ahead/behind overlay windows, and
+deterministic demo coverage. These changes
+are unreleased. Continuous sub-node progress, measured split/finish gaps, the
+full widget-layout architecture, and live driving acceptance remain outstanding.
 
 ### 0. Radar baseline — released as v0.1
 
@@ -116,12 +142,16 @@ release does not complete the Linux, DPI, fullscreen, or driver stability matrix
 
 - Extract a built-in widget registry and overlay host from the radar-specific UI.
 - Add widget enable/disable, selection, move/resize, and saved layout settings.
+- Arrange control-panel gadget cards in a responsive grid: append to the right,
+  wrap to the left of the next row when full, and preserve order during resize.
 - Add shared telemetry capability/age reporting and deterministic demo data.
 - Keep the radar's geometry and required OutSim behavior intact.
 
 Acceptance: the default radar behaves as before; independent widget repainting
 does not depend on moving a slider or repainting the control panel. Exercise
-position mode, rapid visibility toggles, settled resizing, Alt-Tab, and multiple
+grid insertion, exact row boundaries, narrow-window single-column layout,
+resize reflow, and vertical scrolling with enough cards to exceed the window.
+Also exercise position mode, rapid visibility toggles, settled resizing, Alt-Tab, and multiple
 monitors without repeating the previous redraw and freeze regressions.
 
 ### 2. Gear and RPM gadgets

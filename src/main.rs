@@ -87,13 +87,15 @@ fn run() -> Result<(), String> {
             };
             if now >= next_print {
                 println!(
-                    "{} | MCI sets={} OutSim={} rejected={} malformed={} nearby={}",
+                    "{} | MCI sets={} OutSim={} rejected={} malformed={} nearby={} ahead={:?}s behind={:?}s",
                     snapshot.frame.status,
                     snapshot.mci_sets,
                     snapshot.outsim_samples,
                     snapshot.rejected_outsim,
                     snapshot.malformed_packets,
-                    snapshot.frame.cars.len()
+                    snapshot.frame.cars.len(),
+                    snapshot.gaps.ahead.seconds,
+                    snapshot.gaps.behind.seconds
                 );
                 if let Some(error) = &snapshot.error {
                     eprintln!("{error}");

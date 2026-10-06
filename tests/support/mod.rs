@@ -75,6 +75,9 @@ pub fn mci_tick(engine: &mut Engine, time: u64, heading: f64) {
         .packet(
             Packet::Mci(vec![
                 Car {
+                    node: 0,
+                    lap: 1,
+                    position: 1,
                     plid: 1,
                     info: 64,
                     pose: me,
@@ -82,6 +85,9 @@ pub fn mci_tick(engine: &mut Engine, time: u64, heading: f64) {
                     direction: heading,
                 },
                 Car {
+                    node: 0,
+                    lap: 1,
+                    position: 2,
                     plid: 2,
                     info: 128,
                     pose: Pose {

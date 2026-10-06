@@ -1,6 +1,7 @@
 //! Socket workers publish a bounded latest frame; rendering never reads sockets.
 use crate::{
     config::Config,
+    gaps::GapFrame,
     lfs::{
         insim::{self, Framer, Packet},
         outsim,
@@ -23,6 +24,7 @@ pub struct Snapshot {
     pub connected: bool,
     pub version: String,
     pub frame: RadarFrame,
+    pub gaps: GapFrame,
     pub error: Option<String>,
     pub mci_sets: u64,
     pub outsim_samples: u64,
@@ -96,7 +98,7 @@ impl Drop for Runtime {
 }
 
 fn request_roster(stream: &mut TcpStream) -> std::io::Result<()> {
-    for subtype in [13, 14, 7] {
+    for subtype in [13, 14, 7, 19] {
         stream.write_all(&insim::tiny(subtype, 1))?;
     }
     Ok(())
@@ -203,6 +205,10 @@ fn run(
                                             packet,
                                             Packet::Takeover(_)
                                                 | Packet::Session
+                                                | Packet::RaceStart {
+                                                    requested: false,
+                                                    ..
+                                                }
                                                 | Packet::Camera(_)
                                                 | Packet::Tiny(10..=12)
                                         );
@@ -276,6 +282,7 @@ fn run(
         let render_now = start.elapsed().as_millis() as u64;
         stats.connected = protocol_ready;
         stats.frame = engine.frame(render_now, &config);
+        stats.gaps = engine.gaps(render_now, &config, &stats.frame);
         if !protocol_ready {
             stats.frame.status = "Waiting for local LFS InSim connection".into();
         }

@@ -1,6 +1,7 @@
 //! Timestamped telemetry fusion and renderer-independent radar geometry.
 use crate::{
     config::Config,
+    gaps::{GapEngine, GapFrame},
     lfs::{
         insim::{Car, MciAssembler, Packet, Player, State},
         outsim::Sample,
@@ -78,6 +79,7 @@ struct TimedPose {
 }
 #[derive(Default)]
 pub struct Engine {
+    gaps: GapEngine,
     players: BTreeMap<u8, Player>,
     state: Option<State>,
     selected: Option<u8>,
@@ -92,12 +94,14 @@ pub struct Engine {
 }
 impl Engine {
     pub fn clear(&mut self) {
+        self.gaps.forget_track();
         self.players.clear();
         self.state = None;
         self.selected = None;
         self.clear_histories();
     }
     fn clear_histories(&mut self) {
+        self.gaps.clear();
         self.assembler.clear();
         self.snapshots.clear();
         self.poses.clear();
@@ -120,6 +124,9 @@ impl Engine {
     pub fn packet(&mut self, packet: Packet, time: u64) -> Result<(), String> {
         match packet {
             Packet::State(state) => {
+                if !self.gaps.track_matches(&state.track) {
+                    self.gaps.forget_track();
+                }
                 if self.state.as_ref().is_some_and(|old| {
                     old.track != state.track
                         || old.viewed != state.viewed
@@ -153,6 +160,12 @@ impl Engine {
             }
             Packet::Reset(_) => self.clear_histories(),
             Packet::Session => self.clear_histories(),
+            Packet::RaceStart { info, requested } => {
+                if !requested {
+                    self.clear_histories();
+                }
+                self.gaps.set_track(info);
+            }
             Packet::Takeover(_) => {
                 // Re-request roster before trusting ownership again.
                 self.players.clear();
@@ -179,6 +192,7 @@ impl Engine {
                     if teleported {
                         self.clear_histories();
                     }
+                    self.gaps.update(&cars, time);
                     self.snapshots.push_back(Snapshot { time, cars });
                     while self.snapshots.len() > 64 {
                         self.snapshots.pop_front();
@@ -190,6 +204,7 @@ impl Engine {
         }
         let selected = self.select_driver();
         if self.selected != selected {
+            self.gaps.clear();
             self.poses.clear();
             self.outsim_clock = None;
             self.previous_threats.clear();
@@ -248,6 +263,20 @@ impl Engine {
         while self.poses.len() > 128 {
             self.poses.pop_front();
         }
+    }
+    pub fn gaps(&self, now: u64, config: &Config, radar: &RadarFrame) -> GapFrame {
+        if self
+            .state
+            .as_ref()
+            .is_none_or(|state| !self.gaps.track_matches(&state.track))
+        {
+            return GapFrame::unavailable("Waiting for matching track information");
+        }
+        if !radar.live || radar.uncertain {
+            return GapFrame::unavailable(&radar.status);
+        }
+        self.gaps
+            .frame(self.selected, &self.players, now, config.stale_ms)
     }
     pub fn frame(&mut self, now: u64, config: &Config) -> RadarFrame {
         let mut frame = RadarFrame {

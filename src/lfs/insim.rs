@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
 pub struct Car {
+    pub node: u16,
+    pub lap: u16,
+    pub position: u8,
     pub plid: u8,
     pub info: u8,
     pub pose: Pose,
@@ -31,6 +34,19 @@ pub struct State {
     pub viewed: u8,
     pub track: String,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrackInfo {
+    pub track: String,
+    pub nodes: u16,
+    pub finish: u16,
+    pub timing: u8,
+    pub race_laps: u8,
+}
+impl TrackInfo {
+    pub fn supports_gaps(&self) -> bool {
+        self.nodes > 1 && self.finish < self.nodes && self.timing & 0xc0 == 0x40
+    }
+}
 #[derive(Clone, Debug)]
 pub enum Packet {
     Version { version: String, protocol: u8 },
@@ -44,6 +60,7 @@ pub enum Packet {
     Takeover(u8),
     Camera(u8),
     Session,
+    RaceStart { info: TrackInfo, requested: bool },
     Mci(Vec<Car>),
     Other,
 }
@@ -120,7 +137,19 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                 track: text(&p[20..26]),
             })
         }
-        17 => Packet::Session,
+        17 => {
+            exact(28)?;
+            Packet::RaceStart {
+                requested: p[2] != 0,
+                info: TrackInfo {
+                    track: text(&p[8..14]),
+                    nodes: u16_at(p, 18),
+                    finish: u16_at(p, 20),
+                    timing: p[7],
+                    race_laps: p[4],
+                },
+            }
+        }
         19 => {
             exact(8)?;
             Packet::ConnectionLeft(p[3])
@@ -134,7 +163,7 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                 plid: p[3],
                 ucid: p[4],
                 kind: p[5],
-                name: text(&p[8..32]),
+                name: plain_driver_name(&text(&p[8..32])),
                 model: text(&p[40..44]),
                 in_garage: false,
             })
@@ -166,6 +195,9 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                     return Err("MCI contains reserved PLID zero".into());
                 }
                 cars.push(Car {
+                    node: u16_at(c, 0),
+                    lap: u16_at(c, 2),
+                    position: c[5],
                     plid: c[4],
                     info: c[6],
                     pose: Pose {
@@ -192,6 +224,19 @@ fn angle(raw: u16) -> f64 {
 }
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes.split(|b| *b == 0).next().unwrap_or_default()).into_owned()
+}
+/// Driver labels use the overlay's colors rather than LFS's inline color codes.
+fn plain_driver_name(name: &str) -> String {
+    let mut chars = name.chars().peekable();
+    let mut result = String::with_capacity(name.len());
+    while let Some(character) = chars.next() {
+        if character == '^' && chars.peek().is_some_and(char::is_ascii_digit) {
+            chars.next();
+        } else {
+            result.push(character);
+        }
+    }
+    result
 }
 pub(super) fn u16_at(p: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(p[offset..offset + 2].try_into().unwrap())
