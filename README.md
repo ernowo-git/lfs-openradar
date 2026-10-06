@@ -4,6 +4,26 @@ Standalone Rust proximity radar for Live for Speed. The prototype receives
 InSim/MCI opponents and required OutSim local telemetry, interpolates their
 histories, and draws a radar using egui/winit/wgpu.
 
+## Roadmap
+
+OpenRadar will grow into a modular overlay with independently configurable
+radar, split/lap timing, gear, RPM, and gap-ahead/gap-behind widgets. These
+additional gadgets are planned, not included in `v0.1`. They will share the
+existing Rust telemetry runtime: InSim for opponents and timing, and modern
+OutSim for local pose, gear, and engine speed. OutGauge remains optional for
+later dashboard fields.
+
+The future analyzer belongs in a separate repository with its own roadmap and
+releases. That project will own live speed traces, driving-line visualization,
+track maps with splits, telemetry ingestion, storage, analysis, and the frontend
+UI. This repository owns the radar and widgets. Each app can run independently;
+OpenRadar will not act as the analyzer's centralized collector. Simultaneous
+OutSim delivery needs verification, as described in the roadmap's
+connection/coexistence gate.
+
+See the [product roadmap](docs/roadmap.md) for milestones, telemetry requirements,
+widget architecture, and acceptance criteria.
+
 ## Run
 
 From this folder:
@@ -238,4 +258,5 @@ tests/                 Protocol, geometry, and socket integration checks
 ```
 
 Research and remaining acceptance criteria:
-[docs/proximity-radar-plan.md](docs/proximity-radar-plan.md).
+[docs/proximity-radar-plan.md](docs/proximity-radar-plan.md). Future product scope:
+[docs/roadmap.md](docs/roadmap.md).

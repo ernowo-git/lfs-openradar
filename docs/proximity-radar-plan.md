@@ -5,6 +5,12 @@ OpenRadar. [The project README](../README.md) tracks the implemented setup and
 verification limits. Workspace findings below refer to the original LFSLapper
 checkout; those LFSLapper files are outside this standalone repository.
 
+The [product roadmap](roadmap.md) extends this original radar plan after `v0.1`
+with modular split/lap timing, gear, RPM, and gap-ahead/gap-behind gadgets. It
+records the current delivery sequence and shared widget architecture. Modern
+OutSim's optional drive block supplies gear and engine speed; OutGauge remains
+optional for other dashboard fields.
+
 ## Recommendation and assumptions
 
 Build a separate application running beside the driver's LFS client, with native Windows and Linux builds. The MVP requires both InSim/MCI and OutSim: MCI supplies the opponent field and roster, while OutSim supplies the local car's position and orientation for a smoother radar reference. Include a simple radar and configurable warning zones. OutGauge remains optional for future dashboard widgets. Rust is the user's preferred language. At the time of the initial research, the original workspace contained C# LFSLapper source and LPR configuration, with no Rust project yet.
