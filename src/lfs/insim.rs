@@ -61,6 +61,9 @@ pub enum Packet {
     Camera(u8),
     Session,
     RaceStart { info: TrackInfo, requested: bool },
+    Lap { plid: u8, time_ms: u32, penalty: u8 },
+    InvalidLap(u8),
+    LayoutChanged,
     Mci(Vec<Car>),
     Other,
 }
@@ -98,7 +101,8 @@ pub fn init(interval: u16, password: &str) -> Result<[u8; 44], String> {
     let mut p = [0; 44];
     p[0..4].copy_from_slice(&[11, 1, 1, 0]);
     // UDPPort=0 keeps MCI on TCP. OutSim uses its cfg.txt destination.
-    p[6..8].copy_from_slice(&0x24_u16.to_le_bytes());
+    // LOCAL | MCI | HLV: receive track-limit/wall/pit-speed violations.
+    p[6..8].copy_from_slice(&0x124_u16.to_le_bytes());
     p[8] = 9; // LFS 0.7A+ compatibility; only shared v9/v10 packets are used.
     p[10..12].copy_from_slice(&interval.to_le_bytes());
     p[12..12 + password.len()].copy_from_slice(password.as_bytes());
@@ -175,6 +179,37 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
         23 => {
             exact(4)?;
             Packet::Leave(p[3])
+        }
+        24 => {
+            exact(20)?;
+            Packet::Lap {
+                plid: p[3],
+                time_ms: u32_at(p, 4),
+                penalty: p[17],
+            }
+        }
+        26 => {
+            exact(24)?;
+            Packet::InvalidLap(p[3])
+        }
+        30 => {
+            exact(8)?;
+            if p[5] != 0 {
+                Packet::InvalidLap(p[3])
+            } else {
+                Packet::Other
+            }
+        }
+        43 => {
+            exact(40)?;
+            Packet::LayoutChanged
+        }
+        52 => {
+            // HLV is 16 bytes in v9 and 20 bytes in v10.
+            if !matches!(p.len(), 16 | 20) {
+                return Err("HLV requires 16 or 20 bytes".into());
+            }
+            Packet::InvalidLap(p[3])
         }
         29 => {
             exact(8)?;

@@ -25,6 +25,7 @@ pub struct Snapshot {
     pub version: String,
     pub frame: RadarFrame,
     pub gaps: GapFrame,
+    pub delta: crate::delta::DeltaFrame,
     pub error: Option<String>,
     pub mci_sets: u64,
     pub outsim_samples: u64,
@@ -50,10 +51,11 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn start(config: Config) -> Result<Self, String> {
-        Self::start_with_password(config, std::env::var("LFS_INSIM_ADMIN").unwrap_or_default())
+        let password = config.effective_insim_password();
+        Self::start_with_password(config, password)
     }
 
-    /// The password is used only in the handshake; it is never logged or saved.
+    /// An explicit password overrides the TOML/environment value for this connection.
     pub fn start_with_password(config: Config, password: String) -> Result<Self, String> {
         config.validate()?;
         let initial = insim::init(config.mci_interval_ms, &password)?;
@@ -283,6 +285,7 @@ fn run(
         stats.connected = protocol_ready;
         stats.frame = engine.frame(render_now, &config);
         stats.gaps = engine.gaps(render_now, &config, &stats.frame);
+        stats.delta = engine.delta(render_now, &config, &stats.frame);
         if !protocol_ready {
             stats.frame.status = "Waiting for local LFS InSim connection".into();
         }

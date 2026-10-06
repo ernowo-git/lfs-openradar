@@ -4,6 +4,12 @@ Prepared 6 October 2026. Status: local release candidates prepared; GitHub tag,
 draft upload, and publication pending.
 Feature work merged through PR #1. Release branch: `codex/release-v0.2`.
 
+This is the historical v0.2 release plan. Future version bumps use the
+[automatic CI and release workflow](ci-and-releases.md), including full semantic
+version tags and publication after automated checks. Its policy supersedes the
+manual draft/publication sequence below. The platform observations recorded
+here remain specific to the earlier v0.2 candidates.
+
 ## Scope
 
 Ship the wrapping control-panel gadget grid, estimated race-order gaps ahead
@@ -169,9 +175,11 @@ its originating viewport and passes actual release-executable previews on both
 platforms. See vendor/eframe/OPENRADAR-PATCH.md for the implementation scope.
 
 Release candidates include license notices and omit local settings, passwords,
-logs, recordings, and previews. GitHub Actions build automation, fresh-machine
-and newer-distribution startup, and live game acceptance remain outstanding.
-Keep the GitHub release as a draft until its claimed platform checks are complete.
+logs, recordings, and previews. At candidate preparation, GitHub Actions build
+automation, fresh-machine and newer-distribution startup, and live game acceptance
+were outstanding. The repository now defines [CI and release automation](ci-and-releases.md);
+its first hosted execution and the remaining manual platform checks still need
+verification.
 
 ## References
 

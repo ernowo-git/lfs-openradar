@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: '1.99.0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Detect version bump
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Compare versions before and after the push
+        id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: python .github/scripts/release.py detect
+
+  checks:
+    name: Verify release commit
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: [version, checks]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows
+            target: x86_64-pc-windows-msvc
+            binary: lfs-openradar.exe
+          - os: ubuntu-22.04
+            platform: linux
+            target: x86_64-unknown-linux-gnu
+            binary: lfs-openradar
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential pkg-config \
+            libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libudev-dev
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target "$RUST_TARGET"
+          rustup default "$RUST_VERSION"
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-${{ matrix.os }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'vendor/eframe/**') }}
+      - name: Build release executable
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: cargo build --release --locked --target "$RUST_TARGET"
+      - name: Package and smoke-test the actual executable
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RUST_TARGET: ${{ matrix.target }}
+          RELEASE_BINARY: ${{ matrix.binary }}
+        shell: bash
+        run: |
+          python .github/scripts/release.py package \
+            --version "$RELEASE_VERSION" --platform "$RELEASE_PLATFORM" \
+            --binary "target/$RUST_TARGET/release/$RELEASE_BINARY" \
+            --commit "$GITHUB_SHA" --toolchain "$RUST_VERSION" --smoke-test
+      - name: Inspect Linux runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          file target/x86_64-unknown-linux-gnu/release/lfs-openradar
+          ldd target/x86_64-unknown-linux-gnu/release/lfs-openradar
+          readelf --version-info target/x86_64-unknown-linux-gnu/release/lfs-openradar
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.platform }}-${{ needs.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish tag and GitHub Release
+    needs: [version, build]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-${{ needs.version.outputs.tag }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Check downloads and generate checksums
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: python .github/scripts/release.py checksums --version "$RELEASE_VERSION"
+      - name: Generate notes, upload downloads, and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: python .github/scripts/release.py publish --version "$RELEASE_VERSION" --commit "$GITHUB_SHA"

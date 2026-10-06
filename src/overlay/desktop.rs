@@ -78,7 +78,6 @@ pub fn run(
 
 struct App {
     config: Config,
-    insim_password: String,
     config_path: PathBuf,
     runtime: Option<Runtime>,
     demo: Option<Demo>,
@@ -87,13 +86,16 @@ struct App {
     screenshot: Option<PathBuf>,
     screenshot_requested: bool,
     message: Option<String>,
+    setup_message: Option<String>,
+    setup_plan: Option<crate::setup::SetupPlan>,
+    folder_picker: Option<super::folder_picker::FolderPicker>,
     overlay_enabled: bool,
     edit_overlay: bool,
     overlay_created: bool,
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
-    gap_overlays: [GapOverlay; 2],
+    gap_overlays: [GapOverlay; 3],
 }
 
 #[derive(Clone)]
@@ -156,6 +158,7 @@ impl App {
         screenshot: Option<PathBuf>,
     ) -> Self {
         config.prepare_gap_positions();
+        config.insim_password.0 = config.effective_insim_password();
         let started = Instant::now();
         let overlay_data = OverlayData {
             source: if demo {
@@ -172,6 +175,7 @@ impl App {
         let gap_overlays = [
             GapOverlay::new(&config.gap_ahead, &overlay_data),
             GapOverlay::new(&config.gap_behind, &overlay_data),
+            GapOverlay::new(&config.performance_delta, &overlay_data),
         ];
         let mut app = Self {
             overlay_data: Arc::new(Mutex::new(overlay_data)),
@@ -180,7 +184,6 @@ impl App {
             overlay_feedback: Arc::new(Mutex::new(OverlayFeedback::default())),
             overlay_created: false,
             config,
-            insim_password: std::env::var("LFS_INSIM_ADMIN").unwrap_or_default(),
             config_path,
             runtime: None,
             demo: demo.then(Demo::default),
@@ -189,6 +192,9 @@ impl App {
             screenshot,
             screenshot_requested: false,
             message: None,
+            setup_message: None,
+            setup_plan: None,
+            folder_picker: None,
             overlay_enabled: demo,
             edit_overlay: false,
         };
@@ -201,7 +207,10 @@ impl App {
         // Drop joins the old worker and releases its UDP port before restarting.
         self.set_source(OverlaySource::Disconnected);
         self.runtime = None;
-        match Runtime::start_with_password(self.config.clone(), self.insim_password.clone()) {
+        match Runtime::start_with_password(
+            self.config.clone(),
+            self.config.insim_password.0.clone(),
+        ) {
             Ok(runtime) => {
                 self.set_source(OverlaySource::Live(runtime.snapshot_reader()));
                 self.runtime = Some(runtime);
@@ -209,6 +218,96 @@ impl App {
             }
             Err(error) => self.message = Some(error),
         }
+    }
+    fn apply_startup_setup(&mut self, plan: crate::setup::SetupPlan) {
+        self.setup_message = Some(match crate::setup::apply(&plan) {
+            Ok(result) if !result.changed => format!(
+                "InSim is already configured on port {} in {}. Restart LFS if the listener is not running.",
+                plan.target_port,
+                result.script_path.display()
+            ),
+            Ok(result) => {
+                let backup = result
+                    .backup_path
+                    .map(|p| format!(" Backup: {}.", p.display()))
+                    .unwrap_or_default();
+                format!(
+                    "Enabled InSim on port {} in {}.{} Restart LFS to use it.",
+                    plan.target_port,
+                    result.script_path.display(),
+                    backup
+                )
+            }
+            Err(error) => error,
+        });
+        self.setup_plan = None;
+    }
+    fn startup_setup_controls(&mut self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("LFS startup setup").default_open(true).show(ui, |ui| {
+            ui.label("Select your LFS installation to enable InSim automatically on future launches.");
+            ui.horizontal(|ui| {
+                ui.label("LFS folder");
+                if ui.add(egui::TextEdit::singleline(&mut self.config.lfs_directory)
+                    .hint_text("Folder containing LFS.exe").desired_width((ui.available_width() - 100.0).clamp(80.0, 360.0))).changed() {
+                    self.setup_plan = None;
+                    self.setup_message = None;
+                }
+                if ui.button("Browse…").clicked() {
+                    self.setup_plan = None;
+                    self.folder_picker = Some(super::folder_picker::FolderPicker::new(
+                        PathBuf::from(self.config.lfs_directory.trim())));
+                }
+            });
+            ui.label(format!("Startup command: /insim {}", self.config.insim_address.port()));
+            ui.label(egui::RichText::new("Existing commands are preserved. A backup is saved before any edit.").small());
+            if ui.add_enabled(!self.config.lfs_directory.trim().is_empty(),
+                egui::Button::new("Enable InSim at startup")).clicked() {
+                self.setup_message = None;
+                self.setup_plan = None;
+                match crate::setup::prepare(std::path::Path::new(self.config.lfs_directory.trim()),
+                    self.config.insim_address.port()) {
+                    Ok(plan) if plan.has_conflict() => self.setup_plan = Some(plan),
+                    Ok(plan) => self.apply_startup_setup(plan),
+                    Err(error) => self.setup_message = Some(error),
+                }
+            }
+            if let Some(plan) = &self.setup_plan {
+                let ports = plan.existing_ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ");
+                let existing = (plan.existing_ports.len() == 1).then(|| plan.existing_ports[0]).filter(|p| *p != 0);
+                let target = plan.target_port;
+                ui.colored_label(Color32::YELLOW, format!(
+                    "{} already configures InSim port(s): {ports}. OpenRadar uses {target}.",
+                    plan.script_path.display()));
+                let mut replace = false;
+                let mut keep = false;
+                let mut cancel = false;
+                ui.horizontal_wrapped(|ui| {
+                    replace = ui.button(format!("Replace with OpenRadar port {target}")).clicked();
+                    if let Some(port) = existing { keep = ui.button(format!("Use existing port {port}")).clicked(); }
+                    cancel = ui.button("Cancel").clicked();
+                });
+                if replace {
+                    let plan = self.setup_plan.take().unwrap();
+                    self.apply_startup_setup(plan);
+                } else if keep {
+                    self.setup_plan = None;
+                    // Validate the inspected script again before adopting its port.
+                    match crate::setup::prepare(
+                        std::path::Path::new(self.config.lfs_directory.trim()), existing.unwrap()) {
+                        Ok(plan) if !plan.changes_script() => {
+                            self.config.insim_address.set_port(existing.unwrap());
+                            if self.demo.is_none() { self.connect(); }
+                            self.setup_message = Some(format!(
+                                "OpenRadar now uses port {}. Save settings to keep it. Restart LFS if needed.", existing.unwrap()));
+                        }
+                        Ok(_) => self.setup_message = Some("The script changed; inspect it again before adopting a port".into()),
+                        Err(error) => self.setup_message = Some(error),
+                    }
+                } else if cancel { self.setup_plan = None; }
+            }
+            if let Some(message) = &self.setup_message { ui.label(message); }
+            ui.label(egui::RichText::new("Save settings remembers the selected LFS folder.").small());
+        });
     }
     fn set_source(&self, source: OverlaySource) {
         self.overlay_data.lock().unwrap().source = source.clone();
@@ -228,11 +327,11 @@ impl App {
                 feedback.closed = false;
             }
         }
-        for (gap, settings) in self
-            .gap_overlays
-            .iter_mut()
-            .zip([&mut self.config.gap_ahead, &mut self.config.gap_behind])
-        {
+        for (gap, settings) in self.gap_overlays.iter_mut().zip([
+            &mut self.config.gap_ahead,
+            &mut self.config.gap_behind,
+            &mut self.config.performance_delta,
+        ]) {
             if let Ok(mut feedback) = gap.feedback.lock() {
                 if let Some(position) = feedback.moved_to.take() {
                     settings.window_x = Some(position.x);
@@ -255,12 +354,19 @@ impl App {
                     "gap-ahead-overlay",
                     "LFS OpenRadar · Gap ahead",
                 )
-            } else {
+            } else if index == 1 {
                 (
                     Gadget::Behind,
                     &self.config.gap_behind,
                     "gap-behind-overlay",
                     "LFS OpenRadar · Gap behind",
+                )
+            } else {
+                (
+                    Gadget::Delta,
+                    &self.config.performance_delta,
+                    "performance-delta-overlay",
+                    "LFS OpenRadar · Performance delta",
                 )
             };
             let visible = overlay_visible(
@@ -351,6 +457,7 @@ impl App {
         }
     }
     fn gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        let delta_value = delta_value(&snapshot.delta);
         let spacing = 12.0;
         let columns = grid_columns(ui.available_width(), 300.0, spacing);
         let width = (ui.available_width() - spacing * (columns - 1) as f32) / columns as f32;
@@ -396,7 +503,7 @@ impl App {
                                                 .text("Side range (m)"),
                                             );
                                         }
-                                        Gadget::Ahead | Gadget::Behind => {
+                                        Gadget::Ahead | Gadget::Behind | Gadget::Delta => {
                                             let (settings, value, gap) = if *gadget == Gadget::Ahead
                                             {
                                                 (
@@ -404,19 +511,33 @@ impl App {
                                                     &snapshot.gaps.ahead,
                                                     &mut self.gap_overlays[0],
                                                 )
-                                            } else {
+                                            } else if *gadget == Gadget::Behind {
                                                 (
                                                     &mut self.config.gap_behind,
                                                     &snapshot.gaps.behind,
                                                     &mut self.gap_overlays[1],
                                                 )
+                                            } else {
+                                                (
+                                                    &mut self.config.performance_delta,
+                                                    &delta_value,
+                                                    &mut self.gap_overlays[2],
+                                                )
                                             };
                                             ui.checkbox(&mut settings.enabled, "Enabled");
                                             ui.add_space(16.0);
                                             ui.label(
-                                                egui::RichText::new(gap_text(value))
-                                                    .size(28.0)
-                                                    .color(Color32::from_rgb(92, 204, 222)),
+                                                egui::RichText::new(if *gadget == Gadget::Delta {
+                                                    delta_text(&snapshot.delta)
+                                                } else {
+                                                    gap_text(value)
+                                                })
+                                                .size(28.0)
+                                                .color(if *gadget == Gadget::Delta {
+                                                    delta_color(&snapshot.delta)
+                                                } else {
+                                                    Color32::from_rgb(92, 204, 222)
+                                                }),
                                             );
                                             ui.label(gap_driver(value));
                                             ui.label(&value.status);
@@ -463,14 +584,16 @@ enum Gadget {
     Radar,
     Ahead,
     Behind,
+    Delta,
 }
-const GADGETS: &[Gadget] = &[Gadget::Radar, Gadget::Ahead, Gadget::Behind];
+const GADGETS: &[Gadget] = &[Gadget::Radar, Gadget::Ahead, Gadget::Behind, Gadget::Delta];
 impl Gadget {
     fn title(self) -> &'static str {
         match self {
             Self::Radar => "Radar",
             Self::Ahead => "Gap ahead",
             Self::Behind => "Gap behind",
+            Self::Delta => "Performance delta",
         }
     }
 }
@@ -494,6 +617,106 @@ fn gap_text(value: &GapValue) -> String {
         format!("~{seconds:.1} s")
     } else {
         "—".into()
+    }
+}
+fn delta_text(value: &crate::delta::DeltaFrame) -> String {
+    value
+        .seconds
+        .map(|s| format!("{:+.2} s", if s.abs() < 0.005 { 0.0 } else { s }))
+        .unwrap_or_else(|| "— s".into())
+}
+fn delta_color(value: &crate::delta::DeltaFrame) -> Color32 {
+    match value.seconds {
+        Some(s) if s < -0.005 => Color32::from_rgb(100, 230, 145),
+        Some(s) if s > 0.005 => Color32::from_rgb(255, 120, 110),
+        _ => Color32::WHITE,
+    }
+}
+fn delta_trend(value: &crate::delta::DeltaFrame) -> &'static str {
+    match value.trend {
+        Some(t) if t < -0.02 => "GAINING",
+        Some(t) if t > 0.02 => "LOSING",
+        Some(_) => "STEADY",
+        None => "",
+    }
+}
+fn delta_value(value: &crate::delta::DeltaFrame) -> GapValue {
+    GapValue {
+        driver: Some(
+            value
+                .best_seconds
+                .map(|s| format!("Session best {:.0}:{:05.2}", (s / 60.0).floor(), s % 60.0))
+                .unwrap_or_else(|| "No reference lap yet".into()),
+        ),
+        status: format!("{} {}", delta_trend(value), value.status),
+        ..Default::default()
+    }
+}
+fn paint_delta(
+    painter: &egui::Painter,
+    canvas: Rect,
+    value: &crate::delta::DeltaFrame,
+    settings: &GapSettings,
+) {
+    let scale = settings
+        .scale
+        .min(canvas.width() / 230.0)
+        .min(canvas.height() / 76.0);
+    let rect = Rect::from_center_size(canvas.center(), Vec2::new(230.0, 76.0) * scale);
+    painter.rect_filled(
+        rect,
+        6.0 * scale,
+        Color32::from_rgba_unmultiplied(12, 18, 28, 210),
+    );
+    painter.text(
+        rect.min + Vec2::new(8.0, 7.0) * scale,
+        Align2::LEFT_TOP,
+        format!("DELTA  {}", delta_text(value)),
+        FontId::proportional(23.0 * scale),
+        delta_color(value),
+    );
+    painter.text(
+        rect.min + Vec2::new(8.0, 34.0) * scale,
+        Align2::LEFT_TOP,
+        delta_value(value).driver.unwrap_or_default(),
+        FontId::proportional(12.0 * scale),
+        Color32::WHITE,
+    );
+    painter.text(
+        rect.min + Vec2::new(8.0, 55.0) * scale,
+        Align2::LEFT_TOP,
+        if value.seconds.is_some() {
+            format!("{} · ESTIMATE", delta_trend(value))
+        } else {
+            clipped_text(&value.status, 35)
+        },
+        FontId::proportional(10.0 * scale),
+        Color32::GRAY,
+    );
+    if let Some(trend) = value.trend {
+        let center = rect.right() - 43.0 * scale;
+        let y = rect.top() + 42.0 * scale;
+        painter.line_segment(
+            [
+                Pos2::new(center - 28.0 * scale, y),
+                Pos2::new(center + 28.0 * scale, y),
+            ],
+            Stroke::new(3.0 * scale, Color32::DARK_GRAY),
+        );
+        painter.line_segment(
+            [
+                Pos2::new(center, y),
+                Pos2::new(center + trend.clamp(-1.0, 1.0) as f32 * 28.0 * scale, y),
+            ],
+            Stroke::new(
+                4.0 * scale,
+                if trend < 0.0 {
+                    Color32::GREEN
+                } else {
+                    Color32::LIGHT_RED
+                },
+            ),
+        );
     }
 }
 fn gap_driver(value: &GapValue) -> String {
@@ -553,18 +776,19 @@ impl eframe::App for App {
                 ui.add_space(6.0);
                 self.gadget_cards(ui, &snapshot);
                 ui.add_space(8.0);
+                self.startup_setup_controls(ui);
                 if self.demo.is_none() {
                     ui.horizontal(|ui| {
                         ui.label("InSim password");
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.insim_password)
+                            egui::TextEdit::singleline(&mut self.config.insim_password.0)
                                 .password(true)
                                 .hint_text("LFS multiplayer admin password"),
                         );
                     });
                     ui.label(
                         egui::RichText::new(
-                            "Password stays in memory. Enter it, then Apply / reconnect.",
+                            "Save settings stores the password in TOML. Apply / reconnect uses it.",
                         )
                         .small(),
                     );
@@ -631,6 +855,14 @@ impl eframe::App for App {
                 }
                 });
             });
+        if let Some(path) = self.folder_picker.as_mut().and_then(|p| p.show(ctx)) {
+            self.config.lfs_directory = path.display().to_string();
+            self.setup_plan = None;
+            self.setup_message = None;
+        }
+        if self.folder_picker.as_ref().is_some_and(|p| p.closed) {
+            self.folder_picker = None;
+        }
         let foreground = super::game_foreground().unwrap_or(true);
         let show_overlay = overlay_visible(
             self.overlay_enabled,
@@ -727,6 +959,20 @@ fn render_gap_overlay(
     let snapshot = data
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
+    if kind == Gadget::Delta {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                paint_delta(
+                    ui.painter(),
+                    ui.max_rect(),
+                    &snapshot.delta,
+                    &data.config.performance_delta,
+                );
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
     let (title, value, settings) = if kind == Gadget::Ahead {
         ("AHEAD", &snapshot.gaps.ahead, &data.config.gap_ahead)
     } else {
@@ -1077,7 +1323,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(cards.len(), 3);
+            assert_eq!(cards.len(), 4);
             assert!(
                 cards[0].top() < 20.0,
                 "unexpected space before first row: {cards:?}"
@@ -1289,6 +1535,144 @@ mod tests {
         assert!(overlay_visible(true, true, true, false, true, false));
         assert!(!overlay_visible(true, false, true, false, true, true));
         assert!(!overlay_visible(false, true, true, false, true, true));
+    }
+
+    #[test]
+    fn startup_setup_conflict_requires_a_choice_and_adopting_port_leaves_script_untouched() {
+        use std::fs;
+        let temp_root = std::env::temp_dir().canonicalize().unwrap();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder = temp_root.join(format!("openradar-setup-ui-test-{stamp}"));
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("LFS.exe"), b"test fixture").unwrap();
+        fs::create_dir_all(folder.join("data/script")).unwrap();
+        let script = folder.join("data/script/autoexec.lfs");
+        let original = b"// keep this\r\n/insim 29998\r\n/ff 80\r\n";
+        fs::write(&script, original).unwrap();
+        let config = Config {
+            lfs_directory: folder.display().to_string(),
+            ..Default::default()
+        };
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        let ctx = egui::Context::default();
+        fn draw(ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>) -> egui::FullOutput {
+            ctx.run(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(960.0, 600.0))),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| app.startup_setup_controls(ui));
+                },
+            )
+        }
+        fn click(ctx: &egui::Context, app: &mut App, label: &str) {
+            let output = draw(ctx, app, vec![]);
+            let position = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    Shape::Text(t) if t.galley.job.text == label => {
+                        Some(t.pos + t.galley.size() * 0.5)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("Button not found: {label}"));
+            for pressed in [true, false] {
+                draw(
+                    ctx,
+                    app,
+                    vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+        draw(&ctx, &mut app, vec![]);
+        assert_eq!(fs::read(&script).unwrap(), original);
+        click(&ctx, &mut app, "Enable InSim at startup");
+        assert!(app.setup_plan.is_some());
+        assert_eq!(fs::read(&script).unwrap(), original);
+        click(&ctx, &mut app, "Cancel");
+        assert!(app.setup_plan.is_none());
+        click(&ctx, &mut app, "Enable InSim at startup");
+        click(&ctx, &mut app, "Use existing port 29998");
+        assert_eq!(app.config.insim_address.port(), 29998);
+        assert_eq!(fs::read(&script).unwrap(), original);
+        assert_eq!(fs::read_dir(script.parent().unwrap()).unwrap().count(), 1);
+        app.config.insim_address.set_port(29999);
+        click(&ctx, &mut app, "Enable InSim at startup");
+        click(&ctx, &mut app, "Replace with OpenRadar port 29999");
+        assert_eq!(
+            fs::read(&script).unwrap(),
+            b"// keep this\r\n/insim 29999\r\n/ff 80\r\n"
+        );
+        assert_eq!(fs::read_dir(script.parent().unwrap()).unwrap().count(), 2);
+        assert!(app.setup_plan.is_none());
+        assert!(app.setup_message.as_ref().unwrap().contains("Restart LFS"));
+        assert_eq!(folder.parent(), Some(temp_root.as_path()));
+        assert!(
+            folder
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("openradar-setup-ui-test-")
+        );
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn delta_viewport_refreshes_and_closes_independently() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut config = Config::default();
+        config.performance_delta.enabled = true;
+        config.gap_ahead.enabled = true;
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        app.gap_overlays[2].editing = true;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        let id = ViewportId::from_hash_of("performance-delta-overlay");
+        assert_eq!(output.viewport_output[&id].builder.decorations, Some(true));
+        let callback = output.viewport_output[&id].viewport_ui_cb.clone().unwrap();
+        app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
+        app.gap_overlays[2].data.lock().unwrap().started =
+            Instant::now() - Duration::from_secs(201);
+        let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
+        let mut input = egui::RawInput {
+            viewport_id: id,
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 76.0))),
+            ..Default::default()
+        };
+        input.viewports.insert(
+            id,
+            egui::ViewportInfo {
+                parent: Some(ViewportId::ROOT),
+                ..Default::default()
+            },
+        );
+        let output = ctx.run(input, |child| callback(child));
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape,
+            Shape::Text(t) if t.galley.job.text.starts_with("DELTA  +0.00 s"))));
+        assert!(output.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
+        assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
+        app.gap_overlays[2].feedback.lock().unwrap().moved_to = Some(Pos2::new(-800.0, 440.0));
+        app.gap_overlays[2].feedback.lock().unwrap().closed = true;
+        app.receive_overlay_feedback();
+        assert_eq!(app.config.performance_delta.window_x, Some(-800.0));
+        assert!(!app.config.performance_delta.enabled);
+        assert!(app.config.gap_ahead.enabled && app.config.radar_enabled);
     }
 
     #[test]

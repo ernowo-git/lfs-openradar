@@ -1,5 +1,8 @@
 /target/
+/dist/
 /recordings/
+__pycache__/
+*.py[cod]
 /openradar.local.toml
 /demo-preview.png
 /openradar.graphics.log

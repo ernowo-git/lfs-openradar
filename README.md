@@ -1,15 +1,34 @@
 # lfs-openradar
 
-Standalone Rust proximity radar and gap gadgets for Live for Speed. The prototype receives
+Standalone Rust proximity radar, gap gadgets, and live performance delta for Live for Speed. The prototype receives
 InSim/MCI opponents and required OutSim local telemetry, interpolates their
 histories, and draws a radar using egui/winit/wgpu.
+
+## Documentation
+
+- [Configuration guide](docs/configuration.md): config location, `--config`,
+  saving settings, InSim passwords, and telemetry options.
+- [LFS startup setup](docs/lfs-startup-setup.md): enable InSim automatically,
+  resolve port conflicts, and restore a script backup.
+- [CI and releases](docs/ci-and-releases.md): PR checks, version bumps,
+  automatic tags, release notes, and Windows/Linux downloads.
+- [Troubleshooting](docs/troubleshooting.md): connection issues, positioning,
+  paused overlays, and graphics logs.
+- [Product roadmap](docs/roadmap.md): planned widgets and architecture.
+- [v0.2 release notes](docs/release-notes-v0.2.md): platform requirements and
+  release limitations.
+- [v0.2 release plan](docs/release-v0.2.md): packaging and platform acceptance.
+- [Radar implementation plan](docs/proximity-radar-plan.md): telemetry research
+  and driving acceptance criteria.
+- [Graphics freeze investigation](docs/graphics-freeze-investigation.md):
+  evidence, mitigations, and remaining graphics checks.
 
 ## Roadmap
 
 OpenRadar will grow into a modular overlay with independently configurable
 radar, split/lap timing, gear, RPM, and gap-ahead/gap-behind widgets. These
 additional gadgets were not included in `v0.1`. The current feature branch adds
-estimated gap-ahead/gap-behind gadgets and a wrapping control-panel grid;
+estimated gap-ahead/gap-behind gadgets, a live performance delta, and a wrapping control-panel grid;
 split/lap timing, gear, and RPM remain planned. The gadgets share the
 existing Rust telemetry runtime: InSim for opponents and timing, and modern
 OutSim for local pose, gear, and engine speed. OutGauge remains optional for
@@ -25,8 +44,9 @@ connection/coexistence gate.
 
 See the [product roadmap](docs/roadmap.md) for milestones, telemetry requirements,
 widget architecture, and acceptance criteria.
-The [v0.2 release plan](docs/release-v0.2.md) covers Windows `.exe` and native
-Linux x64 downloads, build automation, packaging, and platform acceptance.
+The [CI and release guide](docs/ci-and-releases.md) covers automatic Windows
+and Linux x64 releases. The [v0.2 release plan](docs/release-v0.2.md) records the
+earlier packaging and platform acceptance work.
 
 ## Gap gadgets and control-panel grid
 
@@ -84,6 +104,43 @@ Gap-enabled screenshots wait up to six seconds for the demo passage history;
 shorter timed runs capture earlier. The deterministic demo settles at `~5.0 s`
 ahead and `~2.3 s` behind.
 
+## Live performance delta
+
+Enable **Performance delta** and **Show overlays** in the control panel. Its own
+**Position mode**, X/Y, and Scale controls work like the gap gadgets. Save settings
+to persist placement. Existing configurations default to this gadget disabled.
+
+After crossing the finish line, complete a clean, fully recorded lap to establish
+your session-best reference. The first partial lap after connecting or leaving
+the pits cannot qualify. The display compares elapsed time at matching track
+progress on every complete MCI update (normally every 20 ms), with spatial
+interpolation between reference nodes. Negative/green means ahead; positive/red
+means behind. **GAINING / LOSING / STEADY** and the small bar show the recent change
+in delta, independently of whether you are ahead overall.
+
+The reference stays fixed during a lap and updates after a faster clean lap is
+confirmed by LFS's lap-completion packet. Track-limit/wall/pit-speed violations,
+pit stops, penalties, resets, backwards/discontinuous progress, and missing or
+misassociated telemetry prevent a lap becoming a reference. Pitting or changing
+views retains the best reference for the same driver and car, but restarts
+recording. Track, layout, car, session changes and reconnects clear the reference.
+References are session-only and are not written to disk.
+
+Standard circuit timing is supported in practice, qualifying, and races. Open
+and custom timing layouts show unavailable. Values are explicitly estimates:
+MCI has no per-car physics timestamp, and node spacing, racing-line differences,
+and network arrival timing affect accuracy. Stale telemetry withholds the delta.
+Live driving validation remains required. The demo records a 100-second reference
+lap after its first finish crossing; the delta becomes available after 200 seconds.
+
+```toml
+[performance_delta]
+enabled = true
+window_x = 376.0
+window_y = 360.0
+scale = 1.0
+```
+
 ## Run
 
 From this folder:
@@ -104,7 +161,7 @@ handle and **X/Y** controls in the control panel remain available as alternative
 **Radar size** applies once dragging stops and the value has
 settled for 250 ms. **Side range (m)** changes the drawing scale immediately.
 Use **Save settings**
-to write openradar.local.toml. Use **Apply / reconnect** after changing live
+to write the configuration file used at launch (see [Configuration](#configuration)). Use **Apply / reconnect** after changing live
 settings, including interpolation and detection range.
 
 Windows foreground detection hides each overlay when LFS.exe is not active,
@@ -124,11 +181,15 @@ freezes, see the [troubleshooting guide](docs/troubleshooting.md).
 
 ## LFS setup
 
-The defaults match the OutSim settings inspected on this machine. No LFS or
-LFSLapper configuration files were changed.
+The defaults match the OutSim settings inspected on this machine. The startup
+setup button changes LFS's `autoexec.lfs` only when requested; OutSim and
+LFSLapper settings are configured separately.
 
-1. In the local LFS client, type `/insim 29999`. This is the client's listener,
-   independent of the server's LFSLapper connection.
+1. Open **LFS startup setup** in OpenRadar, select the folder containing `LFS.exe`,
+   and click **Enable InSim at startup**. Restart LFS to activate it. Alternatively,
+   type `/insim 29999` in the local LFS client for the current session. This is the
+   client's listener, independent of the server's LFSLapper connection. See the
+   [startup setup guide](docs/lfs-startup-setup.md) for backups and port conflicts.
 2. With LFS closed, verify these values in its cfg.txt if OutSim is not already
    configured. Restart LFS after any manual changes.
 
@@ -160,17 +221,11 @@ version 9 or 10 responses. It sends initialization, roster/state requests,
 keepalive replies, and a connection-specific close message on exit. It does not
 send game controls, race restarts, telemetry reconfiguration, or host messages.
 
-If LFS reports "password does not match your multiplayer admin password", enter
-the password configured in your **local LFS installation** in the control
-panel's masked **InSim password** field, then click **Apply / reconnect**.
-You can check this password in your local LFS `cfg.txt`: find the `Game Admin`
-entry and use the value after it. Leave the field blank if that entry is empty.
-This is the local client's InSim authentication password; you do not need the
-multiplayer server's admin password. See the
-[LFS InSim password documentation](https://en.lfsmanual.net/wiki/IS_ISI#Admin).
-The field stays in memory and is not included in saved TOML settings or logs.
-Alternatively, set `LFS_INSIM_ADMIN` in the launch environment (also supported
-for headless mode).
+If LFS reports a password mismatch, enter your local LFS `Game Admin` password
+in the masked **InSim password** field, then click **Apply / reconnect**.
+**Save settings** stores it as plain text in the chosen TOML file. See the
+[password configuration guide](docs/configuration.md#insim-password) for TOML
+settings and environment overrides.
 
 OutGauge may share UDP port 30000: its standard packets are ignored. A separate
 telemetry app already bound to that port causes a clear startup error. Configure
@@ -179,37 +234,24 @@ prototype does not implement a relay.
 
 ## Configuration
 
-Copy openradar.example.toml to openradar.local.toml and edit it, or specify a path:
+By default, OpenRadar loads `openradar.local.toml` from its **working directory**:
+the folder it was launched from, which can differ from the executable's folder.
+For simple use, copy [openradar.example.toml](openradar.example.toml) to
+`openradar.local.toml` beside the executable and launch from that folder. A
+Windows shortcut's **Start in** field controls its working directory.
+
+You can keep the config in any directory by passing its path:
 
 ```text
-cargo run -- --config openradar.example.toml
-cargo run -- --headless --seconds 10
-cargo run -- --demo --headless --seconds 3
+lfs-openradar.exe --config "C:\MySettings\openradar.local.toml"
 ```
 
-InSim and OutSim addresses must be loopback addresses with nonzero ports.
-OutSim options in TOML are decimal: 511 corresponds to LFS's hexadecimal 1ff.
+**Save settings** writes to that same path. Without `--config`, a missing default
+file uses built-in defaults, and **Save settings** creates `openradar.local.toml`
+in the working directory. An explicitly supplied config must already exist.
 
-Supported OutSim formats:
-
-- The configurable OutSim2 layout, including the full 280-byte LFST packet.
-  TIME and MAIN fields are required. If ID validation is enabled, the ID field
-  must be present.
-- Legacy format: set outsim_options = 0. Set outsim_id = 0 for a 64-byte packet
-  without ID, or a nonzero ID for a 68-byte packet with ID.
-- A zero outsim_id disables ID validation for configurable layouts.
-
-Interpolation defaults to 60 ms. Arrival times align the sources approximately;
-MCI does not provide per-car physics timestamps. Extrapolation is disabled.
-Telemetry older than 250 ms becomes uncertain; older than 500 ms pauses the
-radar. These thresholds are configurable.
-
-Vehicle footprints use approximate configurable dimensions (default 1.8 m by
-4.2 m). Blue means nearby, amber means alongside, red means potential contact,
-and gray means uncertain telemetry. These are geometric hints, not validated
-collision predictions. Model-specific dimensions and origin offsets still need
-calibration. A height gate reduces bridge/overpass detections but needs track
-testing.
+See the [configuration guide](docs/configuration.md) for relative paths, Linux
+and source-build examples, password settings, and telemetry options.
 
 ## Platform status
 
@@ -276,6 +318,13 @@ consuming the control-panel screenshot while multiple gadgets are enabled.
 
 Rust 1.88 or newer is required. Windows builds need Visual Studio C++ Build Tools
 and a Windows SDK. Cargo.lock records the dependency graph.
+
+GitHub Actions runs formatting, clippy, compilation, desktop/headless tests,
+and release-automation tests on Windows and Linux for every opened or updated PR.
+Merging a higher Cargo version into `main` triggers verified release builds,
+a `vMAJOR.MINOR.PATCH` tag, generated release notes, and downloads for both OSes.
+An unchanged version skips release creation. See [CI and releases](docs/ci-and-releases.md)
+for the version-bump procedure and workflow recovery.
 
 ```text
 cargo fmt --check
