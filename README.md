@@ -25,6 +25,8 @@ connection/coexistence gate.
 
 See the [product roadmap](docs/roadmap.md) for milestones, telemetry requirements,
 widget architecture, and acceptance criteria.
+The [v0.2 release plan](docs/release-v0.2.md) covers Windows `.exe` and native
+Linux x64 downloads, build automation, packaging, and platform acceptance.
 
 ## Gap gadgets and control-panel grid
 

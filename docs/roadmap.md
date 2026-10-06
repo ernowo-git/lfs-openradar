@@ -120,6 +120,10 @@ format is stable; exclude passwords from persisted or exported settings.
 
 ## Delivery milestones
 
+The next planned release is **v0.2**, containing the feature work below with
+Windows x64 and experimental native Linux x64/X11 downloads. See the
+[release plan](release-v0.2.md) for build, packaging, and acceptance gates.
+
 Feature branch `codex/live-gap-gadgets` implements the control-panel wrapping
 card grid and the first common-node race-order gap estimates, including saved
 enable/position/scale settings, separate radar/ahead/behind overlay windows, and
