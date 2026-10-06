@@ -1,0 +1,7 @@
+/target/
+/recordings/
+/openradar.local.toml
+/demo-preview.png
+/openradar.graphics.log
+/.env
+/.env.*

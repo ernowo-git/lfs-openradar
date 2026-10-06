@@ -1,0 +1,20 @@
+# Local LFS client. Enable its listener by typing /insim 29999 in LFS.
+insim_address = "127.0.0.1:29999"
+outsim_bind = "127.0.0.1:30000"
+# Decimal 511 = LFS OutSim Opts 1ff (hexadecimal), full LFST packet.
+outsim_options = 511
+outsim_id = 24601
+mci_interval_ms = 20
+interpolation_ms = 60
+stale_ms = 250
+hide_ms = 500
+side_m = 5.0
+front_m = 8.0
+rear_m = 7.0
+height_m = 3.0
+car_width_m = 1.8
+car_length_m = 4.2
+overlay_x = 40.0
+overlay_y = 160.0
+overlay_size = 320.0
+hide_when_background = true
