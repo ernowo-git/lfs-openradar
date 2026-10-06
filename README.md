@@ -216,10 +216,15 @@ testing.
 - **Windows:** native build, demo rendering, and mock TCP/UDP telemetry are
   exercised during development. Live LFS alignment, input pass-through over the
   game, DPI behavior, and orientation smoothness still need driving tests.
-- **Linux/X11:** native Rust build intended alongside LFS through Proton; not
-  verified on this Windows machine. Install your distribution's C/C++ compiler,
-  pkg-config, X11/Wayland development libraries, and working Vulkan/OpenGL
-  drivers as needed by winit/wgpu.
+  Release executables require the Microsoft Visual C++ x64 runtime; see the
+  [v0.2 release notes](docs/release-notes-v0.2.md) for the official download.
+- **Linux/X11:** the x64 release build, automated tests, and an Xvfb/Vulkan
+  software-rendered demo pass in an Ubuntu 22.04 environment under WSL. The
+  candidate requires glibc 2.35 or newer. Live LFS through Wine/Proton, overlay
+  transparency, stacking, positioning, and click-through over a game still need
+  acceptance testing. Running the binary needs X11 libraries and working
+  Vulkan/OpenGL drivers. Building from source additionally needs a C/C++
+  compiler, pkg-config, and X11/Wayland development libraries.
 - **Wayland:** reliable stacking above a game needs compositor-specific work or
   a layer-shell backend. The current ordinary-window prototype does not promise
   this support.
@@ -262,6 +267,10 @@ no Windows driver settings. Its source/provenance and limits are documented in
 directory when copying the project. The user reported success with the redraw
 and positioning fixes on this Windows setup on 2026-10-06. Broader driving and
 platform acceptance checks below remain outstanding.
+
+The vendored wgpu integration also routes screenshot readbacks to their
+originating viewport on every platform. This prevents another overlay from
+consuming the control-panel screenshot while multiple gadgets are enabled.
 
 ## Build and verification
 

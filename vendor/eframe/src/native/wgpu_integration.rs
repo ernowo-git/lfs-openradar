@@ -570,6 +570,25 @@ impl WgpuWinitRunning<'_> {
                 viewports, painter, ..
             } = &mut *shared_lock;
 
+            // Readbacks are shared by every viewport. Route each result to its
+            // originating window instead of whichever window happens to paint
+            // next, otherwise a deferred overlay can consume a root screenshot.
+            let mut screenshot_events = Vec::new();
+            painter.handle_screenshots(&mut screenshot_events);
+            for event in screenshot_events {
+                let egui::Event::Screenshot { viewport_id, .. } = &event else {
+                    continue;
+                };
+                let screenshot_viewport = *viewport_id;
+                if let Some(state) = viewports
+                    .get_mut(&screenshot_viewport)
+                    .and_then(|viewport| viewport.egui_winit.as_mut())
+                {
+                    state.egui_input_mut().events.push(event);
+                    integration.egui_ctx.request_repaint_of(screenshot_viewport);
+                }
+            }
+
             if viewport_id != ViewportId::ROOT {
                 let Some(viewport) = viewports.get(&viewport_id) else {
                     return Ok(EventResult::Wait);
@@ -623,8 +642,6 @@ impl WgpuWinitRunning<'_> {
                 .iter()
                 .map(|(id, viewport)| (*id, viewport.info.clone()))
                 .collect();
-
-            painter.handle_screenshots(&mut raw_input.events);
 
             (viewport_ui_cb, raw_input)
         };

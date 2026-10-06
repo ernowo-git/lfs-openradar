@@ -1,4 +1,4 @@
-# Local Windows graphics patches
+# Local eframe graphics patches
 
 This directory contains the eframe 0.33.0 source and assets from the installed
 Cargo registry package, used through `[patch.crates-io]`. The registry cache is
@@ -50,6 +50,26 @@ The style is set at creation and stays stable through position-mode,
 visibility, and size changes. The application keeps the zero-alpha clear color
 and paints no radar backing outside position mode; it keeps a backing in
 position mode and an opaque control-panel frame.
+
+## Screenshot delivery
+
+The wgpu painter has one readback channel shared by all viewports. Upstream
+`handle_screenshots` drains that channel into the raw input of whichever window
+paints next, even when the screenshot's viewport ID identifies another window.
+With independent overlays, a child callback could consume the root screenshot
+before OpenRadar's control-panel callback saw it. A radar-only capture succeeded
+while a three-gadget capture silently produced no image.
+
+The integration now queues each screenshot in the originating viewport's
+egui-winit input and requests its repaint before taking the current window's
+input. Results for removed/uninitialized viewports are dropped. Other input
+events and rendering remain on their existing paths. This correction applies
+to every platform using this wgpu integration.
+
+The optimized Windows DX12 and Ubuntu 22.04 X11/Vulkan executables both produced
+1020 x 760 three-gadget previews after this change, with the expected demo gap
+values. The previews were visually inspected. This verifies screenshot delivery,
+not live game compositing or every desktop configuration.
 
 Retain this directory when copying/building OpenRadar. When upgrading eframe,
 check whether a released upstream fix replaces this patch and remove the local
