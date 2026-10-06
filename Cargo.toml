@@ -1,9 +1,10 @@
 [package]
 name = "lfs-openradar"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 publish = false
+license = "MIT"
 description = "LFS proximity radar using InSim/MCI and required OutSim telemetry"
 
 [dependencies]
