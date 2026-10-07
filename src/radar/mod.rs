@@ -398,7 +398,6 @@ impl Engine {
             ..Default::default()
         };
         let Some(id) = self.selected else {
-            frame.status = "Drive your local human car in cockpit or custom view".into();
             return frame;
         };
         frame.driver = self.players.get(&id).map(|p| p.name.clone());

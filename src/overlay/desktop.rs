@@ -557,6 +557,9 @@ impl App {
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
+                    ui.add_space(8.0);
+                    project_link(ui, ProjectLink::GitHub);
+                    project_link(ui, ProjectLink::KoFi);
                 });
                 ui.horizontal_wrapped(|ui| {
                     if self.demo.is_some() {
@@ -565,7 +568,9 @@ impl App {
                             "DEMO / NO NETWORK CONNECTION",
                         );
                     }
-                    ui.label(&snapshot.frame.status);
+                    if !snapshot.frame.status.is_empty() {
+                        ui.label(&snapshot.frame.status);
+                    }
                     badge(ui, "MCI", snapshot.frame.mci_age_ms, self.config.stale_ms);
                     badge(
                         ui,
@@ -856,6 +861,101 @@ impl Gadget {
 }
 fn grid_columns(width: f32, card_width: f32, spacing: f32) -> usize {
     (((width + spacing) / (card_width + spacing)).floor() as usize).max(1)
+}
+
+#[derive(Clone, Copy)]
+enum ProjectLink {
+    GitHub,
+    KoFi,
+}
+impl ProjectLink {
+    fn label(self) -> &'static str {
+        match self {
+            Self::GitHub => "GitHub repository",
+            Self::KoFi => "Ko-fi",
+        }
+    }
+    fn url(self) -> &'static str {
+        match self {
+            Self::GitHub => "https://github.com/ernowo-git/lfs-openradar",
+            Self::KoFi => "https://ko-fi.com/",
+        }
+    }
+}
+fn project_link(ui: &mut egui::Ui, link: ProjectLink) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Link, ui.is_enabled(), link.label())
+    });
+    let painter = ui.painter();
+    let background = Color32::from_rgb(12, 18, 28);
+    let color = if response.hovered() || response.has_focus() {
+        Color32::from_rgb(92, 204, 222)
+    } else {
+        Color32::from_rgb(215, 223, 231)
+    };
+    let p = |x, y| rect.min + Vec2::new(x, y);
+    match link {
+        ProjectLink::GitHub => {
+            // A cat silhouette cut out of a circular mark, drawn at native scale.
+            painter.circle_filled(p(13.0, 13.0), 10.5, color);
+            painter.rect_filled(
+                Rect::from_min_max(p(7.0, 8.0), p(19.0, 16.0)),
+                4.0,
+                background,
+            );
+            for ear in [
+                [p(7.0, 10.0), p(7.0, 5.5), p(11.0, 8.0)],
+                [p(15.0, 8.0), p(19.0, 5.5), p(19.0, 10.0)],
+            ] {
+                painter.add(Shape::convex_polygon(
+                    ear.to_vec(),
+                    background,
+                    Stroke::NONE,
+                ));
+            }
+            painter.rect_filled(
+                Rect::from_min_max(p(9.5, 14.0), p(16.5, 24.0)),
+                2.0,
+                background,
+            );
+            painter.add(Shape::line(
+                vec![p(10.0, 20.0), p(7.0, 19.0), p(5.5, 16.0), p(4.0, 15.5)],
+                Stroke::new(2.0_f32, background),
+            ));
+        }
+        ProjectLink::KoFi => {
+            painter.rect_stroke(
+                Rect::from_min_max(p(17.0, 9.0), p(24.0, 17.0)),
+                3.0,
+                Stroke::new(2.5_f32, color),
+                egui::StrokeKind::Middle,
+            );
+            painter.rect_filled(Rect::from_min_max(p(3.0, 7.0), p(20.0, 21.0)), 4.0, color);
+            let heart = Color32::from_rgb(255, 94, 91);
+            painter.circle_filled(p(9.3, 12.0), 2.4, heart);
+            painter.circle_filled(p(13.7, 12.0), 2.4, heart);
+            painter.add(Shape::convex_polygon(
+                vec![p(7.0, 12.7), p(16.0, 12.7), p(11.5, 17.5)],
+                heart,
+                Stroke::NONE,
+            ));
+        }
+    }
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0_f32, color),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if response.clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(link.url()));
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(link.label())
 }
 fn fit_panel_to_monitor(desired: Vec2, monitor: Option<Vec2>) -> Vec2 {
     monitor.map_or(desired, |monitor| {
@@ -1366,13 +1466,6 @@ fn paint(
         ],
         grid,
     );
-    painter.text(
-        Pos2::new(centre.x, panel.top() + 12.0),
-        Align2::CENTER_TOP,
-        "FRONT",
-        FontId::proportional(10.0),
-        Color32::from_rgb(119, 146, 163),
-    );
     if frame.live {
         for car in &frame.cars {
             let color = if car.uncertain {
@@ -1419,17 +1512,15 @@ fn paint(
             Color32::from_rgb(160, 177, 192),
         );
     }
-    painter.text(
-        Pos2::new(centre.x, panel.bottom() - 10.0),
-        Align2::CENTER_BOTTOM,
-        if frame.live {
-            "Approximate footprints"
-        } else {
-            "MCI + OutSim required"
-        },
-        FontId::proportional(10.0),
-        Color32::from_rgb(119, 146, 163),
-    );
+    if !frame.live {
+        painter.text(
+            Pos2::new(centre.x, panel.bottom() - 10.0),
+            Align2::CENTER_BOTTOM,
+            "MCI + OutSim required",
+            FontId::proportional(10.0),
+            Color32::from_rgb(119, 146, 163),
+        );
+    }
 }
 
 fn draw_car(
@@ -2000,6 +2091,62 @@ mod tests {
                 .starts_with("openradar-setup-ui-test-")
         );
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn header_link_icons_open_the_requested_pages_in_a_new_tab() {
+        for link in [ProjectLink::GitHub, ProjectLink::KoFi] {
+            let ctx = egui::Context::default();
+            let mut rect = Rect::NOTHING;
+            let mut draw = |events| {
+                ctx.run(
+                    egui::RawInput {
+                        events,
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 100.0))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            rect = project_link(ui, link).rect;
+                        });
+                    },
+                )
+            };
+            draw(vec![]);
+            let position = rect.center();
+            // End the first draw borrow before sending the click.
+            let mut output = egui::FullOutput::default();
+            for pressed in [true, false] {
+                output = ctx.run(
+                    egui::RawInput {
+                        events: vec![
+                            egui::Event::PointerMoved(position),
+                            egui::Event::PointerButton {
+                                pos: position,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(100.0, 100.0))),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            project_link(ui, link);
+                        });
+                    },
+                );
+            }
+            assert!(
+                output
+                    .platform_output
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command,
+                egui::OutputCommand::OpenUrl(open) if open.url == link.url() && open.new_tab))
+            );
+        }
     }
 
     #[test]
