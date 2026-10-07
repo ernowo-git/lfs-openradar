@@ -41,6 +41,7 @@ fn race_start_track_metadata_is_validated_and_preserved() {
     bytes[8..12].copy_from_slice(b"BL1R");
     bytes[18..20].copy_from_slice(&800_u16.to_le_bytes());
     bytes[20..22].copy_from_slice(&100_u16.to_le_bytes());
+    bytes[22..24].copy_from_slice(&350_u16.to_le_bytes());
     let Packet::RaceStart { info, requested } = insim::decode(&bytes).unwrap() else {
         panic!()
     };
@@ -48,7 +49,27 @@ fn race_start_track_metadata_is_validated_and_preserved() {
     assert!(info.supports_gaps());
     assert_eq!(info.track, "BL1R");
     assert_eq!((info.nodes, info.finish, info.race_laps), (800, 100, 10));
+    assert_eq!(info.split1, 350);
     assert!(insim::decode(&packet(17, 4)).is_err());
+}
+#[test]
+fn split_packet_preserves_player_timing_checkpoint_and_penalty() {
+    let mut bytes = packet(25, 16);
+    bytes[3] = 7;
+    bytes[4..8].copy_from_slice(&23456_u32.to_le_bytes());
+    bytes[12] = 1;
+    bytes[13] = 2;
+    assert!(matches!(
+        insim::decode(&bytes).unwrap(),
+        Packet::Split {
+            plid: 7,
+            time_ms: 23456,
+            split: 1,
+            penalty: 2
+        }
+    ));
+    assert!(insim::decode(&packet(25, 4)).is_err());
+    assert!(insim::decode(&packet(25, 20)).is_err());
 }
 #[test]
 fn driver_names_ignore_color_codes_and_preserve_text() {
@@ -69,6 +90,18 @@ fn driver_names_ignore_color_codes_and_preserve_text() {
         };
         assert_eq!(player.name, expected);
     }
+}
+
+#[test]
+fn requested_player_roster_is_distinct_from_a_car_rejoining() {
+    let mut bytes = packet(21, 76);
+    bytes[3] = 7;
+    bytes[73] = 1;
+    assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Player(_)));
+    bytes[2] = 1;
+    assert!(
+        matches!(insim::decode(&bytes).unwrap(), Packet::PlayerSnapshot(player) if player.plid == 7)
+    );
 }
 #[test]
 fn sets_of_17_and_48_cars_are_atomic() {

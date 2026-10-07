@@ -2,12 +2,27 @@
 
 For installation and a quick start, see [the README](../README.md).
 
-## Gap gadgets and control-panel grid
+## Control panel and gadget grid
 
-The control panel presents Radar, Gap ahead, and Gap behind cards in insertion
-order. Cards fill each row from left to right, wrap to the left of the next row
+The **Gadgets** tab presents Radar, Gap ahead, Gap behind, and Performance delta
+cards in insertion order. Cards fill each row from left to right, wrap to the left of the next row
 when another card cannot fit, and reflow when the window is resized. Narrow
-windows use one column; extra rows and global controls are vertically scrollable.
+windows use one column; extra rows are vertically scrollable. The panel opens
+with space for all four cards and fits its height to the rendered controls,
+within the monitor's available size. You can resize it afterward.
+
+The header keeps **Apply / reconnect**, **Save settings**, **Quit**, and connection
+status visible on either tab, including when the content is scrolled. Apply is
+disabled in the demo, which has no network connection. The **Settings** tab holds
+**Show overlays**, background hiding, interpolation, the InSim password, and
+**LFS startup setup**. Radar position mode, X/Y, size, and side range are inside
+the Radar card.
+
+**Interpolation (ms)** smooths radar motion by displaying slightly older
+telemetry between received updates. Higher values can reduce jitter but add
+display delay. The default is 60 ms; 0 ms uses the latest time shared by MCI
+and OutSim. It does not predict future positions. Click **Apply / reconnect**
+after changing interpolation in live mode.
 
 Radar, Gap ahead, and Gap behind each have a separate transparent overlay window.
 Enable the gap gadgets from their cards, turn on each card's **Position mode**,
@@ -22,6 +37,26 @@ logical screen pixels. Fresh gap windows start to the right of the radar.
 
 **Show overlays** controls all windows, and each card's Enabled setting controls
 its own gadget. Closing a gadget window in Position mode disables that gadget.
+Press **Insert** to toggle **Show overlays**. On Windows this also works while
+LFS has focus; on other desktop backends the control panel must have focus.
+Holding the key toggles once until you release it. The shortcut uses an
+unmodified key and follows the same background-hiding and Position mode rules
+as the checkbox. Individual gadget Enabled settings and telemetry recording
+are preserved when all overlays are hidden.
+
+To change the shortcut, edit this top-level setting in your TOML configuration
+and restart OpenRadar:
+
+```toml
+overlay_toggle_key = "Insert"
+```
+
+Supported names are `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`,
+`Space`, `Enter`, `Escape`, `Tab`, `Backspace`, `F1` through `F24`, letters `A`
+through `Z`, and digits `0` through `9`. Names are case-insensitive. For example,
+use `"F8"` to change the key or `"None"` to disable the shortcut. Existing
+configuration files that omit this setting default to `"Insert"`.
+
 The radar retains its own size and position when gaps are enabled or moved.
 All windows share one telemetry connection, but repaint independently; hidden
 windows keep their existing graphics surfaces for reuse. Background hiding
@@ -65,20 +100,36 @@ Enable **Performance delta** and **Show overlays** in the control panel. Its own
 to persist placement. Existing configurations default to this gadget disabled.
 
 After crossing the finish line, complete a clean, fully recorded lap to establish
-your session-best reference. The first partial lap after connecting or leaving
-the pits cannot qualify. The display compares elapsed time at matching track
+your session-best reference. In a race, recording starts at the beginning of
+lap 2 and comparison becomes available on lap 3 after LFS confirms a clean lap 2.
+The first partial lap after connecting or leaving the pits cannot qualify.
+Practice and qualifying also record a full lap from a finish-line crossing.
+The display compares elapsed time at matching track
 progress on every complete MCI update (normally every 20 ms), with spatial
 interpolation between reference nodes. Negative/green means ahead; positive/red
 means behind. **GAINING / LOSING / STEADY** and the small bar show the recent change
 in delta, independently of whether you are ahead overall.
 
+**Estimated lap** shows the projected current lap time in minutes and seconds.
+It is the reference lap time plus the live delta.
+It assumes the remaining track is driven at the reference pace. It shows a dash
+until comparison is available, and while paused, invalid, or telemetry is stale.
+
 The reference stays fixed during a lap and updates after a faster clean lap is
 confirmed by LFS's lap-completion packet. Track-limit/wall/pit-speed violations,
-pit stops, penalties, resets, backwards/discontinuous progress, and missing or
-misassociated telemetry prevent a lap becoming a reference. Pitting or changing
+pit stops, penalties, resets, and backwards/discontinuous progress prevent a lap
+becoming a reference. Pitting or changing
 views retains the best reference for the same driver and car, but restarts
 recording. Track, layout, car, session changes and reconnects clear the reference.
 References are session-only and are not written to disk.
+
+Brief lag, missing car updates, or mismatched OutSim samples hide live values
+while retaining validated lap and gap history in memory. Timing resumes if
+matching telemetry returns within 500 ms with continuous progress. Longer gaps
+discard the current recording but retain an established session reference.
+Other drivers' pit stops, resets, and roster refreshes preserve your timing
+history. Recording starts, interruptions, resets, and accepted references are
+logged in `openradar.graphics.log` beside the configuration file.
 
 Standard circuit timing is supported in practice, qualifying, and races. Open
 and custom timing layouts show unavailable. Values are explicitly estimates:

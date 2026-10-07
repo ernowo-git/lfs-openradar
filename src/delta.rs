@@ -12,6 +12,7 @@ pub struct DeltaFrame {
     /// Change in delta per second: negative means gaining time.
     pub trend: Option<f64>,
     pub best_seconds: Option<f64>,
+    pub estimated_lap_seconds: Option<f64>,
     pub status: String,
 }
 impl DeltaFrame {
@@ -55,6 +56,12 @@ pub struct DeltaEngine {
 }
 impl DeltaEngine {
     pub fn reset_lap(&mut self) {
+        self.reset_lap_with_reason("recording interrupted");
+    }
+    pub fn reset_lap_with_reason(&mut self, reason: &str) {
+        if self.current.is_some() || self.completed.is_some() {
+            timing_log(&format!("lap recording reset: {reason}"));
+        }
         self.latest = None;
         self.current = None;
         self.completed = None;
@@ -62,8 +69,20 @@ impl DeltaEngine {
         self.previous_delta = None;
         self.value = DeltaFrame::unavailable("Cross the finish line to start recording");
     }
+    /// Keep the trusted trace during a brief telemetry interruption. The next
+    /// update still has to pass the time, position and progress continuity checks.
+    pub fn suspend(&mut self, reason: &str) {
+        if self.value.status != reason && self.current.is_some() {
+            timing_log(&format!("lap recording suspended: {reason}"));
+        }
+        self.previous_delta = None;
+        self.value = DeltaFrame::unavailable(reason);
+    }
     pub fn reset_reference(&mut self) {
         self.reset_lap();
+        if self.best.is_some() {
+            timing_log("session reference cleared");
+        }
         self.best = None;
     }
     pub fn clear(&mut self) {
@@ -115,6 +134,7 @@ impl DeltaEngine {
         if completed.lap.valid
             && penalty == 0
             && official_ms > 0
+            && measured > 0.0
             && (measured - f64::from(official_ms)).abs() <= 1_000.0
             && self
                 .best
@@ -131,6 +151,7 @@ impl DeltaEngine {
                 points,
                 seconds: f64::from(official_ms) / 1000.0,
             });
+            timing_log(&format!("session reference recorded: {official_ms} ms"));
             self.previous_delta = None;
         }
         self.completed = None;
@@ -143,22 +164,46 @@ impl DeltaEngine {
         };
         let nodes = i64::from(track.nodes);
         let finish = i64::from(track.finish);
-        let progress =
-            |c: &Car| i64::from(c.lap) * nodes + (i64::from(c.node) + nodes - finish) % nodes;
-        if car.node >= track.nodes || car.info & (4 | 8 | 32) != 0 {
-            self.reset_lap();
+        let offset_of = |c: &Car| (i64::from(c.node) + nodes - finish) % nodes;
+        if car.info & 32 != 0 {
+            self.suspend("Track progress delayed");
+            return;
+        }
+        if car.node >= track.nodes || car.info & (4 | 8) != 0 {
+            self.reset_lap_with_reason("invalid track progress");
             self.value.status = "Unreliable track progress".into();
             return;
         }
         if let Some((old, old_time)) = &self.latest {
-            let distance = progress(car) - progress(old);
-            if time <= *old_time
-                || time - old_time > 500
-                || distance < 0
-                || distance > (nodes / 4).max(1)
-                || old.pose.distance(car.pose) > 10.0 + (time - old_time) as f64 * 0.15
+            // The nearest path node and the actual timed finish crossing do
+            // not necessarily advance in the same MCI update. Track the local
+            // trace through node wrap independently of the race lap counter.
+            let distance = (i64::from(car.node) + nodes - i64::from(old.node)) % nodes;
+            let old_offset = offset_of(old);
+            let new_offset = offset_of(car);
+            let lap_change = i32::from(car.lap) - i32::from(old.lap);
+            let crossed_finish = old_offset + distance >= nodes;
+            let near_finish =
+                old_offset.min(nodes - old_offset) <= 2 || new_offset.min(nodes - new_offset) <= 2;
+            // Multiple MCI sets can arrive in the same TCP read and share its
+            // timestamp. They are ordered samples, not a backwards clock.
+            let interruption = if time < *old_time {
+                Some("arrival clock moved backwards")
+            } else if time - old_time > 500 {
+                Some("telemetry gap exceeded 500 ms")
+            } else if distance > (nodes / 4).max(1) {
+                Some("track progress moved backwards or jumped")
+            } else if !matches!(lap_change, 0 | 1)
+                || (lap_change == 1 && !crossed_finish && !near_finish)
             {
-                self.reset_lap();
+                Some("lap counter changed away from the finish")
+            } else if old.pose.distance(car.pose) > 10.0 + (time - old_time) as f64 * 0.15 {
+                Some("car position jumped")
+            } else {
+                None
+            };
+            if let Some(reason) = interruption {
+                self.reset_lap_with_reason(reason);
             } else {
                 for step in 1..=distance {
                     let fraction = step as f64 / distance as f64;
@@ -169,7 +214,7 @@ impl DeltaEngine {
                         z: old.pose.z + (car.pose.z - old.pose.z) * fraction,
                         heading: car.pose.heading,
                     };
-                    let offset = (progress(old) + step) % nodes;
+                    let offset = (old_offset + step) % nodes;
                     if let Some(lap) = &mut self.current {
                         lap.points.push(Point {
                             time: crossing - lap.start,
@@ -187,6 +232,7 @@ impl DeltaEngine {
                             points: vec![Point { time: 0.0, pose }],
                             valid: true,
                         });
+                        timing_log(&format!("lap recording started: lap {}", car.lap));
                     }
                 }
             }
@@ -209,7 +255,7 @@ impl DeltaEngine {
         let Some(best) = &self.best else {
             return;
         };
-        let offset = (progress(car) % nodes) as usize;
+        let offset = offset_of(car) as usize;
         let (a, b) = (best.points[offset], best.points[offset + 1]);
         let dx = b.pose.x - a.pose.x;
         let dy = b.pose.y - a.pose.y;
@@ -238,6 +284,7 @@ impl DeltaEngine {
         }
         self.value.seconds = Some(seconds);
         self.value.trend = trend;
+        self.value.estimated_lap_seconds = Some(best.seconds + seconds);
         self.value.status = "Estimated vs session best".into();
     }
     pub fn frame(&self, now: u64, stale_ms: u64) -> DeltaFrame {
@@ -251,6 +298,17 @@ impl DeltaEngine {
                 ..DeltaFrame::unavailable("Telemetry stale")
             };
         }
-        self.value.clone()
+        // Retain the session reference when recording is interrupted.
+        DeltaFrame {
+            best_seconds: self.best.as_ref().map(|b| b.seconds),
+            ..self.value.clone()
+        }
     }
+}
+
+fn timing_log(message: &str) {
+    #[cfg(feature = "desktop")]
+    log::info!(target: "openradar_timing", "{message}");
+    #[cfg(not(feature = "desktop"))]
+    let _ = message;
 }
