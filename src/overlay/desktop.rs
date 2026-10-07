@@ -266,9 +266,41 @@ impl App {
         });
         self.setup_plan = None;
     }
+    fn apply_outsim_setup(&mut self) {
+        self.setup_plan = None;
+        if self
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.snapshot().connected)
+        {
+            self.setup_message = Some(
+                "Close LFS before configuring OutSim, then click Configure OutSim again.".into(),
+            );
+            return;
+        }
+        self.setup_message = Some(
+            match crate::setup::prepare_outsim(
+                std::path::Path::new(self.config.lfs_directory.trim()),
+                &self.config,
+            )
+            .and_then(|plan| crate::setup::apply_outsim(&plan))
+            {
+                Ok(result) if !result.changed => format!(
+                    "OutSim already matches OpenRadar in {}. Start LFS to use it.",
+                    result.cfg_path.display()
+                ),
+                Ok(result) => format!(
+                    "Configured OutSim in {}. Backup: {}. Start LFS to use it.",
+                    result.cfg_path.display(),
+                    result.backup_path.unwrap().display()
+                ),
+                Err(error) => error,
+            },
+        );
+    }
     fn startup_setup_controls(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("LFS startup setup").default_open(true).show(ui, |ui| {
-            ui.label("Select your LFS installation to enable InSim automatically on future launches.");
+            ui.label("Select your LFS installation to set up InSim and OutSim for OpenRadar.");
             ui.horizontal(|ui| {
                 ui.label("LFS folder");
                 if ui.add(egui::TextEdit::singleline(&mut self.config.lfs_directory)
@@ -329,6 +361,13 @@ impl App {
                     }
                 } else if cancel { self.setup_plan = None; }
             }
+            ui.add_space(8.0);
+            ui.label("Close LFS before configuring OutSim. Start LFS again after setup.");
+            if ui.add_enabled(!self.config.lfs_directory.trim().is_empty(),
+                egui::Button::new("Configure OutSim")).clicked() {
+                self.apply_outsim_setup();
+            }
+            ui.label(egui::RichText::new("Updates OutSim in cfg.txt to match OpenRadar. Other settings are preserved; cfg.txt.BAK is saved before changes.").small());
             if let Some(message) = &self.setup_message { ui.label(message); }
             ui.label(egui::RichText::new("Save settings remembers the selected LFS folder.").small());
         });
@@ -426,7 +465,12 @@ impl App {
             let id = ViewportId::from_hash_of(id);
             ctx.show_viewport_deferred(
                 id,
-                gap.window.builder(title, visible, gap.editing),
+                if kind == Gadget::Delta {
+                    gap.window
+                        .builder_with_height(title, visible, gap.editing, 100.0)
+                } else {
+                    gap.window.builder(title, visible, gap.editing)
+                },
                 move |child, _| {
                     render_gap_overlay(child, &data, &feedback, kind);
                 },
@@ -747,7 +791,12 @@ impl App {
                                                     Color32::from_rgb(92, 204, 222)
                                                 }),
                                             );
-                                            ui.label(gap_driver(value));
+                                            ui.label(if *gadget == Gadget::Delta {
+                                                value.driver.clone().unwrap_or_default()
+                                            } else { gap_driver(value) });
+                                            if *gadget == Gadget::Delta {
+                                                ui.label(estimated_lap_text(&snapshot.delta));
+                                            }
                                             ui.label(&value.status);
                                             if let Some(age) = value.measured_age_ms {
                                                 ui.label(format!(
@@ -858,12 +907,32 @@ fn delta_value(value: &crate::delta::DeltaFrame) -> GapValue {
         driver: Some(
             value
                 .best_seconds
-                .map(|s| format!("Session best {:.0}:{:05.2}", (s / 60.0).floor(), s % 60.0))
+                .map(|s| format!("Session best {}", lap_time_text(s)))
+                .or_else(|| {
+                    value
+                        .sector_reference_seconds
+                        .map(|_| "Reference after sector 1".into())
+                })
                 .unwrap_or_else(|| "No reference lap yet".into()),
         ),
         status: format!("{} {}", delta_trend(value), value.status),
         ..Default::default()
     }
+}
+fn lap_time_text(seconds: f64) -> String {
+    let hundredths = (seconds * 100.0).round() as u64;
+    format!(
+        "{}:{:02}.{:02}",
+        hundredths / 6000,
+        hundredths / 100 % 60,
+        hundredths % 100
+    )
+}
+fn estimated_lap_text(value: &crate::delta::DeltaFrame) -> String {
+    value
+        .estimated_lap_seconds
+        .map(|s| format!("Estimated lap {}", lap_time_text(s)))
+        .unwrap_or_else(|| "Estimated lap —".into())
 }
 fn paint_delta(
     painter: &egui::Painter,
@@ -874,8 +943,8 @@ fn paint_delta(
     let scale = settings
         .scale
         .min(canvas.width() / 230.0)
-        .min(canvas.height() / 76.0);
-    let rect = Rect::from_center_size(canvas.center(), Vec2::new(230.0, 76.0) * scale);
+        .min(canvas.height() / 100.0);
+    let rect = Rect::from_center_size(canvas.center(), Vec2::new(230.0, 100.0) * scale);
     painter.rect_filled(
         rect,
         6.0 * scale,
@@ -896,10 +965,25 @@ fn paint_delta(
         Color32::WHITE,
     );
     painter.text(
-        rect.min + Vec2::new(8.0, 55.0) * scale,
+        rect.min + Vec2::new(8.0, 54.0) * scale,
+        Align2::LEFT_TOP,
+        estimated_lap_text(value),
+        FontId::proportional(13.0 * scale),
+        Color32::WHITE,
+    );
+    painter.text(
+        rect.min + Vec2::new(8.0, 78.0) * scale,
         Align2::LEFT_TOP,
         if value.seconds.is_some() {
-            format!("{} · ESTIMATE", delta_trend(value))
+            format!(
+                "{} · {}",
+                delta_trend(value),
+                if value.since_sector1 {
+                    "SINCE SECTOR 1"
+                } else {
+                    "ESTIMATE"
+                }
+            )
         } else {
             clipped_text(&value.status, 35)
         },
@@ -908,7 +992,7 @@ fn paint_delta(
     );
     if let Some(trend) = value.trend {
         let center = rect.right() - 43.0 * scale;
-        let y = rect.top() + 42.0 * scale;
+        let y = rect.top() + 84.0 * scale;
         painter.line_segment(
             [
                 Pos2::new(center - 28.0 * scale, y),
@@ -1802,7 +1886,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_setup_conflict_requires_a_choice_and_adopting_port_leaves_script_untouched() {
+    fn startup_setup_handles_insim_conflicts_and_configures_outsim_in_one_click() {
         use std::fs;
         let temp_root = std::env::temp_dir().canonicalize().unwrap();
         let stamp = std::time::SystemTime::now()
@@ -1816,6 +1900,9 @@ mod tests {
         let script = folder.join("data/script/autoexec.lfs");
         let original = b"// keep this\r\n/insim 29998\r\n/ff 80\r\n";
         fs::write(&script, original).unwrap();
+        let cfg_path = folder.join("cfg.txt");
+        let cfg_original = b"Game Admin preserve-me\r\nOutSim Mode 0\r\n";
+        fs::write(&cfg_path, cfg_original).unwrap();
         let config = Config {
             lfs_directory: folder.display().to_string(),
             ..Default::default()
@@ -1864,6 +1951,7 @@ mod tests {
         }
         draw(&ctx, &mut app, vec![]);
         assert_eq!(fs::read(&script).unwrap(), original);
+        assert_eq!(fs::read(&cfg_path).unwrap(), cfg_original);
         click(&ctx, &mut app, "Enable InSim at startup");
         assert!(app.setup_plan.is_some());
         assert_eq!(fs::read(&script).unwrap(), original);
@@ -1884,6 +1972,25 @@ mod tests {
         assert_eq!(fs::read_dir(script.parent().unwrap()).unwrap().count(), 2);
         assert!(app.setup_plan.is_none());
         assert!(app.setup_message.as_ref().unwrap().contains("Restart LFS"));
+        click(&ctx, &mut app, "Configure OutSim");
+        assert_eq!(fs::read(folder.join("cfg.txt.BAK")).unwrap(), cfg_original);
+        assert_eq!(fs::read(&cfg_path).unwrap(),
+            b"Game Admin preserve-me\r\nOutSim Mode 1\r\nOutSim Delay 2\r\nOutSim IP 127.0.0.1\r\nOutSim Port 30000\r\nOutSim ID 24601\r\nOutSim Opts 1ff\r\n");
+        assert!(
+            app.setup_message
+                .as_ref()
+                .unwrap()
+                .contains("Configured OutSim")
+        );
+        let files = fs::read_dir(&folder).unwrap().count();
+        click(&ctx, &mut app, "Configure OutSim");
+        assert!(
+            app.setup_message
+                .as_ref()
+                .unwrap()
+                .contains("already matches")
+        );
+        assert_eq!(fs::read_dir(&folder).unwrap().count(), files);
         assert_eq!(folder.parent(), Some(temp_root.as_path()));
         assert!(
             folder
@@ -1893,6 +2000,73 @@ mod tests {
                 .starts_with("openradar-setup-ui-test-")
         );
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn delta_estimate_and_partial_reference_labels_fit_the_overlay() {
+        assert_eq!(lap_time_text(59.999), "1:00.00");
+        for scale in [0.6, 1.0, 2.5] {
+            for partial in [false, true] {
+                let ctx = egui::Context::default();
+                let value = crate::delta::DeltaFrame {
+                    seconds: Some(-0.15),
+                    trend: Some(-0.1),
+                    best_seconds: (!partial).then_some(83.6),
+                    sector_reference_seconds: partial.then_some(60.0),
+                    since_sector1: partial,
+                    estimated_lap_seconds: Some(83.45),
+                    status: "Delta since sector 1".into(),
+                };
+                let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 100.0) * scale);
+                let output = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(rect),
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        paint_delta(
+                            &ctx.layer_painter(egui::LayerId::background()),
+                            rect,
+                            &value,
+                            &GapSettings {
+                                scale,
+                                ..Default::default()
+                            },
+                        );
+                    },
+                );
+                let texts: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        Shape::Text(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                assert!(
+                    texts
+                        .iter()
+                        .any(|t| t.galley.job.text == "Estimated lap 1:23.45")
+                );
+                assert!(texts.iter().any(|t| t.galley.job.text.contains(if partial {
+                    "SINCE SECTOR 1"
+                } else {
+                    "ESTIMATE"
+                })));
+                for text in texts {
+                    assert!(
+                        rect.expand(scale)
+                            .contains_rect(text.visual_bounding_rect()),
+                        "{}",
+                        text.galley.job.text
+                    );
+                }
+                assert_eq!(
+                    estimated_lap_text(&crate::delta::DeltaFrame::default()),
+                    "Estimated lap —"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1909,6 +2083,10 @@ mod tests {
         });
         let id = ViewportId::from_hash_of("performance-delta-overlay");
         assert_eq!(output.viewport_output[&id].builder.decorations, Some(true));
+        assert_eq!(
+            output.viewport_output[&id].builder.inner_size,
+            Some(Vec2::new(230.0, 100.0))
+        );
         let callback = output.viewport_output[&id].viewport_ui_cb.clone().unwrap();
         app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
         app.gap_overlays[2].data.lock().unwrap().started =
@@ -1916,7 +2094,7 @@ mod tests {
         let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
         let mut input = egui::RawInput {
             viewport_id: id,
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 76.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 100.0))),
             ..Default::default()
         };
         input.viewports.insert(
@@ -1929,6 +2107,8 @@ mod tests {
         let output = ctx.run(input, |child| callback(child));
         assert!(output.shapes.iter().any(|s| matches!(&s.shape,
             Shape::Text(t) if t.galley.job.text.starts_with("DELTA  +0.00 s"))));
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape,
+            Shape::Text(t) if t.galley.job.text == "Estimated lap 1:40.00")));
         assert!(output.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
         assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
         app.gap_overlays[2].feedback.lock().unwrap().moved_to = Some(Pos2::new(-800.0, 440.0));

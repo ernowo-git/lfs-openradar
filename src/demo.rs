@@ -56,6 +56,7 @@ impl Default for Demo {
                         track: "DEMO".into(),
                         nodes: 1000,
                         finish: 0,
+                        split1: 0,
                         timing: 0x40,
                         race_laps: 10,
                     },

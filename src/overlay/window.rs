@@ -47,10 +47,19 @@ impl GapWindow {
         false
     }
     pub fn builder(&self, title: &str, visible: bool, editing: bool) -> ViewportBuilder {
+        self.builder_with_height(title, visible, editing, 76.0)
+    }
+    pub fn builder_with_height(
+        &self,
+        title: &str,
+        visible: bool,
+        editing: bool,
+        height: f32,
+    ) -> ViewportBuilder {
         native_builder(
             title,
             self.position,
-            Vec2::new(230.0, 76.0) * self.scale,
+            Vec2::new(230.0, height) * self.scale,
             visible,
             editing,
         )

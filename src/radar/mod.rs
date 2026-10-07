@@ -208,6 +208,16 @@ impl Engine {
                     self.delta.invalidate();
                 }
             }
+            Packet::Split {
+                plid,
+                time_ms,
+                split,
+                penalty,
+            } => {
+                if self.selected == Some(plid) && split == 1 {
+                    self.delta.split_report(time_ms, penalty, time);
+                }
+            }
             Packet::RaceStart { info, requested } => {
                 if !requested {
                     self.delta.reset_reference();
@@ -364,8 +374,13 @@ impl Engine {
             .frame(self.selected, &self.players, now, config.stale_ms)
     }
     pub fn delta(&self, now: u64, config: &Config, radar: &RadarFrame) -> crate::delta::DeltaFrame {
+        let delta = self.delta.frame(now, config.stale_ms);
         if !radar.live || radar.uncertain {
-            return crate::delta::DeltaFrame::unavailable(&radar.status);
+            return crate::delta::DeltaFrame {
+                best_seconds: delta.best_seconds,
+                sector_reference_seconds: delta.sector_reference_seconds,
+                ..crate::delta::DeltaFrame::unavailable(&radar.status)
+            };
         }
         if self
             .state
@@ -374,7 +389,7 @@ impl Engine {
         {
             return crate::delta::DeltaFrame::unavailable("Waiting for matching track information");
         }
-        self.delta.frame(now, config.stale_ms)
+        delta
     }
     pub fn frame(&mut self, now: u64, config: &Config) -> RadarFrame {
         let mut frame = RadarFrame {

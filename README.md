@@ -13,7 +13,7 @@ primary platform; Linux/X11 support is experimental.
 
 ![OpenRadar demo showing the control panel, radar, gap gadgets, and performance delta](assets/preview.png)
 
-Synthetic demo with all gadgets enabled. The delta needs a fully recorded lap
+Synthetic demo with all gadgets enabled. The demo delta needs a fully recorded lap
 before it can show a comparison.
 
 <!-- Replace the preview image with an animated GIF when available. -->
@@ -46,10 +46,15 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
    Use **Apply / reconnect** after changing connection or telemetry settings.
 
 The gaps compare adjacent **race-order** drivers on standard circuit layouts.
-The performance delta becomes available after a clean, fully recorded reference
-lap: negative/green means ahead, positive/red means behind. **GAINING / LOSING**
-shows the recent change. Gaps and delta are estimates; stale or unsuitable
-telemetry shows unavailable.
+In races with sector timing, the performance delta can start at sector 1 on
+lap 2, using a clean recorded trace from lap 1's sector-1 checkpoint to the
+finish. **SINCE SECTOR 1** means the delta excludes the first sector. Once a
+complete reference lap is recorded, comparison covers the full lap.
+Negative/green means ahead; positive/red means behind. **GAINING / LOSING** shows
+the recent change. **Estimated lap** projects the current lap's finish time;
+in sector-1 mode it includes the current lap's actual first-sector time.
+Gaps, delta, and projected lap times are estimates; stale or unsuitable telemetry
+shows unavailable.
 
 Keep the control panel open; closing it exits OpenRadar. Windows can hide the
 overlays when LFS is in the background. Windowed or borderless LFS is the initial
@@ -100,8 +105,10 @@ file uses built-in defaults and is created when you save. See the
 1. Open **Settings → LFS startup setup** in OpenRadar, select the folder containing
    `LFS.exe`, and click **Enable InSim at startup**. Restart LFS to activate it.
    For the current session only, type `/insim 29999` in LFS instead.
-2. With LFS closed, configure OutSim in its `cfg.txt` to match the defaults below,
-   then restart LFS. The startup setup button configures InSim only.
+2. Close LFS. In **Settings → LFS startup setup**, click **Configure OutSim**.
+   This updates `cfg.txt` to match OpenRadar and saves `cfg.txt.BAK` before editing.
+   Existing backups are kept. Start LFS after setup. You can also configure it
+   manually with the defaults below:
 
 ```text
 OutSim Mode 1

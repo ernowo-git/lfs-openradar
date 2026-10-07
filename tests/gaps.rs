@@ -12,6 +12,7 @@ fn track() -> TrackInfo {
         track: "BL1".into(),
         nodes: 1000,
         finish: 200,
+        split1: 0,
         timing: 0x40,
         race_laps: 10,
     }

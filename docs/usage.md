@@ -79,13 +79,29 @@ Enable **Performance delta** and **Show overlays** in the control panel. Its own
 **Position mode**, X/Y, and Scale controls work like the gap gadgets. Save settings
 to persist placement. Existing configurations default to this gadget disabled.
 
-After crossing the finish line, complete a clean, fully recorded lap to establish
-your session-best reference. The first partial lap after connecting or leaving
-the pits cannot qualify. The display compares elapsed time at matching track
+In a race with sector timing, OpenRadar can record a clean trace from the
+sector-1 checkpoint to the finish on lap 1. On lap 2, delta starts at zero when
+you cross sector 1 and compares the remainder of the lap with that trace.
+**SINCE SECTOR 1** identifies this partial comparison: gains or losses in the
+first sector are excluded from the delta. A reference requires uninterrupted
+matching telemetry and LFS's split and lap reports; connecting after sector 1
+means waiting for a later valid recording.
+
+After a clean, fully recorded finish-to-finish lap is confirmed, the gadget uses
+your session-best full-lap reference. Tracks without a valid sector-1 checkpoint,
+practice, and qualifying use this full-lap recording path from the beginning.
+The display compares elapsed time at matching track
 progress on every complete MCI update (normally every 20 ms), with spatial
 interpolation between reference nodes. Negative/green means ahead; positive/red
 means behind. **GAINING / LOSING / STEADY** and the small bar show the recent change
 in delta, independently of whether you are ahead overall.
+
+**Estimated lap** shows the projected current lap time in minutes and seconds.
+With a full reference it is the reference lap time plus the live delta. With a
+partial reference it is the current lap's official first-sector time plus the
+reference time from sector 1 to the finish, plus the live delta since sector 1.
+It assumes the remaining track is driven at the reference pace. It shows a dash
+until comparison is available, and while paused, invalid, or telemetry is stale.
 
 The reference stays fixed during a lap and updates after a faster clean lap is
 confirmed by LFS's lap-completion packet. Track-limit/wall/pit-speed violations,
