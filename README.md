@@ -13,7 +13,7 @@ primary platform; Linux/X11 support is experimental.
 
 <img src="assets/preview.gif" alt="OpenRadar in Live for Speed showing the radar, gap gadgets, and performance delta" width="100%">
 
-Live gameplay with the radar, gap indicators, and lap performance delta enabled.
+Live preview. Yes, we need more pixels.
 
 ## Features
 
