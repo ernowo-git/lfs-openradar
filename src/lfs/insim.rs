@@ -2,6 +2,13 @@
 use crate::radar::Pose;
 use std::collections::BTreeMap;
 
+pub const ISS_GAME: u16 = 1;
+pub const ISS_REPLAY: u16 = 2;
+pub const ISS_PAUSED: u16 = 4;
+pub const ISS_SHIFTU: u16 = 8;
+pub const ISS_FRONT_END: u16 = 256;
+pub const ISS_MULTI: u16 = 512;
+
 #[derive(Clone, Debug)]
 pub struct Car {
     pub node: u16,

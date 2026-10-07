@@ -1,14 +1,14 @@
-use super::window::{GapWindow, OverlayWindow};
+use super::{
+    render::{GapPaintOptions, delta_value, paint, paint_delta, paint_gap},
+    theme,
+    window::{GapWindow, OverlayWindow},
+};
 use crate::{
-    config::{Config, GapSettings},
+    config::{Config, GapSettings, HudStyle},
     demo::Demo,
-    gaps::GapValue,
-    radar::{RadarFrame, Threat},
     runtime::{Runtime, Snapshot, SnapshotReader},
 };
-use eframe::egui::{
-    self, Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, Vec2, ViewportBuilder, ViewportId,
-};
+use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2, ViewportBuilder, ViewportId};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -76,6 +76,7 @@ pub fn run(
                 let info = state.adapter.get_info();
                 log::info!(target: "openradar_graphics", "GPU {} · backend {:?} · driver {} {}", info.name, info.backend, info.driver, info.driver_info);
             }
+            super::fonts::install(&cc.egui_ctx);
             cc.egui_ctx.set_theme(egui::Theme::Dark);
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let mut app = App::new(
@@ -470,6 +471,7 @@ impl App {
         }
     }
     fn show_gap_overlays(&mut self, ctx: &egui::Context, foreground: bool) {
+        let theme = theme::resolve(self.config.hud_style);
         for (index, gap) in self.gap_overlays.iter_mut().enumerate() {
             let (kind, settings, id, title) = if index == 0 {
                 (
@@ -526,12 +528,17 @@ impl App {
             let id = ViewportId::from_hash_of(id);
             ctx.show_viewport_deferred(
                 id,
-                if kind == Gadget::Delta {
-                    gap.window
-                        .builder_with_height(title, visible, gap.editing, 100.0)
-                } else {
-                    gap.window.builder(title, visible, gap.editing)
-                },
+                gap.window.builder(
+                    title,
+                    visible,
+                    gap.editing,
+                    match kind {
+                        Gadget::Delta => theme.delta.panel.size,
+                        Gadget::Ahead => theme.ahead.panel.size,
+                        Gadget::Behind => theme.behind.panel.size,
+                        Gadget::Radar => unreachable!(),
+                    },
+                ),
                 move |child, _| {
                     render_gap_overlay(child, &data, &feedback, kind);
                 },
@@ -726,6 +733,9 @@ impl App {
         }
         ui.add_space(12.0);
         ui.heading("Telemetry");
+        if self.demo.is_none() {
+            follow_view_controls(ui, &mut self.config);
+        }
         ui.add(egui::Slider::new(&mut self.config.interpolation_ms, 0..=200).text("Interpolation (ms)"))
             .on_hover_text("Smooths radar motion by drawing slightly older telemetry between received updates. More delay can reduce jitter but makes the radar respond later. No positions are predicted.");
         ui.label("Interpolation smooths radar motion by delaying the display. Higher values can reduce jitter but add latency; 0 ms uses the latest shared telemetry time.");
@@ -777,6 +787,34 @@ impl App {
     }
 
     fn gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        let previous_style = self.config.hud_style;
+        let previous_debug = self.config.hud_debug;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("HUD style");
+            egui::ComboBox::from_id_salt("hud-style")
+                .selected_text(self.config.hud_style.label())
+                .show_ui(ui, |ui| {
+                    for style in [HudStyle::Classic, HudStyle::Gt7Inspired] {
+                        ui.selectable_value(&mut self.config.hud_style, style, style.label());
+                    }
+                });
+            ui.checkbox(&mut self.config.hud_debug, "HUD debug information")
+                .on_hover_text(
+                    "Show gap diagnostic status and measurement age in both HUD styles.",
+                );
+        });
+        if self.config.hud_style != previous_style || self.config.hud_debug != previous_debug {
+            for id in [
+                "radar-overlay",
+                "gap-ahead-overlay",
+                "gap-behind-overlay",
+                "performance-delta-overlay",
+            ] {
+                ui.ctx().request_repaint_of(ViewportId::from_hash_of(id));
+            }
+        }
+        ui.add_space(CARD_SPACING);
+        let theme = theme::resolve(self.config.hud_style);
         let delta_value = delta_value(&snapshot.delta);
         let spacing = CARD_SPACING;
         let columns = grid_columns(ui.available_width(), CARD_WIDTH, spacing).min(GADGETS.len());
@@ -818,7 +856,7 @@ impl App {
                                             ui.add(
                                                 egui::Slider::new(
                                                     &mut self.config.side_m,
-                                                    3.0..=12.0,
+                                                    0.0..=12.0,
                                                 )
                                                 .text("Side range (m)"),
                                             );
@@ -855,31 +893,20 @@ impl App {
                                             };
                                             ui.checkbox(&mut settings.enabled, "Enabled");
                                             ui.add_space(16.0);
-                                            ui.label(
-                                                egui::RichText::new(if *gadget == Gadget::Delta {
-                                                    delta_text(&snapshot.delta)
-                                                } else {
-                                                    gap_text(value)
-                                                })
-                                                .size(28.0)
-                                                .color(if *gadget == Gadget::Delta {
-                                                    delta_color(&snapshot.delta)
-                                                } else {
-                                                    Color32::from_rgb(92, 204, 222)
-                                                }),
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                Vec2::new(ui.available_width(), 120.0),
+                                                egui::Sense::hover(),
                                             );
-                                            ui.label(if *gadget == Gadget::Delta {
-                                                value.driver.clone().unwrap_or_default()
-                                            } else { gap_driver(value) });
+                                            let preview = GapSettings { scale: 1.0, ..settings.clone() };
                                             if *gadget == Gadget::Delta {
-                                                ui.label(estimated_lap_text(&snapshot.delta));
-                                            }
-                                            ui.label(&value.status);
-                                            if let Some(age) = value.measured_age_ms {
-                                                ui.label(format!(
-                                                    "Measured {:.1} s ago",
-                                                    age as f64 / 1000.0
-                                                ));
+                                                paint_delta(ui.painter(), rect, &snapshot.delta, &preview, theme.delta);
+                                            } else {
+                                                let (title, style) = if *gadget == Gadget::Ahead {
+                                                    ("AHEAD", theme.ahead)
+                                                } else {
+                                                    ("BEHIND", theme.behind)
+                                                };
+                                                paint_gap(ui.painter(), rect, title, value, &GapPaintOptions::new(&preview, self.config.hud_debug), style);
                                             }
                                             ui.add_space(16.0);
                                             ui.checkbox(&mut gap.editing, "Position mode");
@@ -1044,143 +1071,6 @@ fn overlay_visible(
 ) -> bool {
     master && enabled && (editing || demo || !hide_in_background || foreground)
 }
-fn gap_text(value: &GapValue) -> String {
-    if let Some(laps) = value.laps {
-        format!("{laps} lap{}", if laps == 1 { "" } else { "s" })
-    } else if let Some(seconds) = value.seconds {
-        format!("~{seconds:.1} s")
-    } else {
-        "—".into()
-    }
-}
-fn delta_text(value: &crate::delta::DeltaFrame) -> String {
-    value
-        .seconds
-        .map(|s| format!("{:+.2} s", if s.abs() < 0.005 { 0.0 } else { s }))
-        .unwrap_or_else(|| "— s".into())
-}
-fn delta_color(value: &crate::delta::DeltaFrame) -> Color32 {
-    match value.seconds {
-        Some(s) if s < -0.005 => Color32::from_rgb(100, 230, 145),
-        Some(s) if s > 0.005 => Color32::from_rgb(255, 120, 110),
-        _ => Color32::WHITE,
-    }
-}
-fn delta_trend(value: &crate::delta::DeltaFrame) -> &'static str {
-    match value.trend {
-        Some(t) if t < -0.02 => "GAINING",
-        Some(t) if t > 0.02 => "LOSING",
-        Some(_) => "STEADY",
-        None => "",
-    }
-}
-fn delta_value(value: &crate::delta::DeltaFrame) -> GapValue {
-    GapValue {
-        driver: Some(
-            value
-                .best_seconds
-                .map(|s| format!("Session best {}", lap_time_text(s)))
-                .unwrap_or_else(|| "No reference lap yet".into()),
-        ),
-        status: format!("{} {}", delta_trend(value), value.status),
-        ..Default::default()
-    }
-}
-fn lap_time_text(seconds: f64) -> String {
-    let hundredths = (seconds * 100.0).round() as u64;
-    format!(
-        "{}:{:02}.{:02}",
-        hundredths / 6000,
-        hundredths / 100 % 60,
-        hundredths % 100
-    )
-}
-fn estimated_lap_text(value: &crate::delta::DeltaFrame) -> String {
-    value
-        .estimated_lap_seconds
-        .map(|s| format!("Estimated lap {}", lap_time_text(s)))
-        .unwrap_or_else(|| "Estimated lap —".into())
-}
-fn paint_delta(
-    painter: &egui::Painter,
-    canvas: Rect,
-    value: &crate::delta::DeltaFrame,
-    settings: &GapSettings,
-) {
-    let scale = settings
-        .scale
-        .min(canvas.width() / 230.0)
-        .min(canvas.height() / 100.0);
-    let rect = Rect::from_center_size(canvas.center(), Vec2::new(230.0, 100.0) * scale);
-    painter.rect_filled(
-        rect,
-        6.0 * scale,
-        Color32::from_rgba_unmultiplied(12, 18, 28, 210),
-    );
-    painter.text(
-        rect.min + Vec2::new(8.0, 7.0) * scale,
-        Align2::LEFT_TOP,
-        format!("DELTA  {}", delta_text(value)),
-        FontId::proportional(23.0 * scale),
-        delta_color(value),
-    );
-    painter.text(
-        rect.min + Vec2::new(8.0, 34.0) * scale,
-        Align2::LEFT_TOP,
-        delta_value(value).driver.unwrap_or_default(),
-        FontId::proportional(12.0 * scale),
-        Color32::WHITE,
-    );
-    painter.text(
-        rect.min + Vec2::new(8.0, 54.0) * scale,
-        Align2::LEFT_TOP,
-        estimated_lap_text(value),
-        FontId::proportional(13.0 * scale),
-        Color32::WHITE,
-    );
-    painter.text(
-        rect.min + Vec2::new(8.0, 78.0) * scale,
-        Align2::LEFT_TOP,
-        if value.seconds.is_some() {
-            format!("{} · ESTIMATE", delta_trend(value))
-        } else {
-            clipped_text(&value.status, 35)
-        },
-        FontId::proportional(10.0 * scale),
-        Color32::GRAY,
-    );
-    if let Some(trend) = value.trend {
-        let center = rect.right() - 43.0 * scale;
-        let y = rect.top() + 84.0 * scale;
-        painter.line_segment(
-            [
-                Pos2::new(center - 28.0 * scale, y),
-                Pos2::new(center + 28.0 * scale, y),
-            ],
-            Stroke::new(3.0 * scale, Color32::DARK_GRAY),
-        );
-        painter.line_segment(
-            [
-                Pos2::new(center, y),
-                Pos2::new(center + trend.clamp(-1.0, 1.0) as f32 * 28.0 * scale, y),
-            ],
-            Stroke::new(
-                4.0 * scale,
-                if trend < 0.0 {
-                    Color32::GREEN
-                } else {
-                    Color32::LIGHT_RED
-                },
-            ),
-        );
-    }
-}
-fn gap_driver(value: &GapValue) -> String {
-    match (&value.driver, value.position) {
-        (Some(name), Some(position)) => format!("P{position} · {name}"),
-        _ => "—".into(),
-    }
-}
 impl eframe::App for App {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
@@ -1303,6 +1193,7 @@ fn render_gap_overlay(
     let snapshot = data
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
+    let theme = theme::resolve(data.config.hud_style);
     if kind == Gadget::Delta {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -1312,20 +1203,38 @@ fn render_gap_overlay(
                     ui.max_rect(),
                     &snapshot.delta,
                     &data.config.performance_delta,
+                    theme.delta,
                 );
             });
         overlay_painted(child, &data, feedback);
         return;
     }
-    let (title, value, settings) = if kind == Gadget::Ahead {
-        ("AHEAD", &snapshot.gaps.ahead, &data.config.gap_ahead)
+    let (title, value, settings, style) = if kind == Gadget::Ahead {
+        (
+            "AHEAD",
+            &snapshot.gaps.ahead,
+            &data.config.gap_ahead,
+            theme.ahead,
+        )
     } else {
-        ("BEHIND", &snapshot.gaps.behind, &data.config.gap_behind)
+        (
+            "BEHIND",
+            &snapshot.gaps.behind,
+            &data.config.gap_behind,
+            theme.behind,
+        )
     };
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(child, |ui| {
-            paint_gap(ui.painter(), ui.max_rect(), title, value, settings);
+            paint_gap(
+                ui.painter(),
+                ui.max_rect(),
+                title,
+                value,
+                &GapPaintOptions::new(settings, data.config.hud_debug),
+                style,
+            );
         });
     overlay_painted(child, &data, feedback);
 }
@@ -1353,58 +1262,6 @@ fn overlay_painted(child: &egui::Context, data: &OverlayData, feedback: &Mutex<O
         }
     }
     child.request_repaint_after(Duration::from_millis(16));
-}
-
-fn paint_gap(
-    painter: &egui::Painter,
-    canvas: Rect,
-    title: &str,
-    value: &GapValue,
-    settings: &GapSettings,
-) {
-    let scale = settings
-        .scale
-        .min(canvas.width() / 230.0)
-        .min(canvas.height() / 76.0);
-    let size = Vec2::new(230.0, 76.0) * scale;
-    let rect = Rect::from_center_size(canvas.center(), size);
-    painter.rect_filled(
-        rect,
-        6.0 * scale,
-        Color32::from_rgba_unmultiplied(12, 18, 28, 210),
-    );
-    painter.text(
-        Pos2::new(rect.left() + 8.0 * scale, rect.top() + 7.0 * scale),
-        Align2::LEFT_TOP,
-        format!("{title}  {}", gap_text(value)),
-        FontId::proportional(20.0 * scale),
-        Color32::from_rgb(92, 204, 222),
-    );
-    painter.text(
-        Pos2::new(rect.left() + 8.0 * scale, rect.top() + 32.0 * scale),
-        Align2::LEFT_TOP,
-        clipped_text(&gap_driver(value), 28),
-        FontId::proportional(13.0 * scale),
-        Color32::WHITE,
-    );
-    let status = value
-        .measured_age_ms
-        .map(|age| format!("ESTIMATE · {:.1} s ago", age as f64 / 1000.0))
-        .unwrap_or_else(|| clipped_text(&value.status, 32));
-    painter.text(
-        Pos2::new(rect.left() + 8.0 * scale, rect.top() + 53.0 * scale),
-        Align2::LEFT_TOP,
-        status,
-        FontId::proportional(10.0 * scale),
-        Color32::GRAY,
-    );
-}
-fn clipped_text(text: &str, limit: usize) -> String {
-    if text.chars().count() > limit {
-        format!("{}…", text.chars().take(limit - 1).collect::<String>())
-    } else {
-        text.into()
-    }
 }
 
 fn gap_position_controls(
@@ -1489,140 +1346,33 @@ fn badge(ui: &mut egui::Ui, name: &str, age: Option<u64>, stale: u64) {
     ui.label(egui::RichText::new(text).color(color).small());
 }
 
-fn paint(
-    painter: &egui::Painter,
-    rect: Rect,
-    frame: &RadarFrame,
-    config: &Config,
-    draw_background: bool,
-) {
-    let size = rect.width().min(rect.height());
-    let panel = Rect::from_center_size(rect.center(), Vec2::splat(size - 8.0));
-    if draw_background {
-        painter.rect_filled(
-            panel,
-            16.0,
-            Color32::from_rgba_unmultiplied(13, 23, 35, 225),
-        );
-    }
-    let centre = panel.center() + Vec2::new(0.0, 10.0);
-    let scale = ((size - 60.0) / (config.front_m + config.rear_m + config.car_length_m) as f32)
-        .min((size - 60.0) / (2.0 * config.side_m + config.car_width_m) as f32);
-    let grid = Stroke::new(1.0_f32, Color32::from_rgb(37, 57, 74));
-    for radius in [3.0, 6.0, 9.0] {
-        painter.circle_stroke(centre, radius * scale, grid);
-    }
-    painter.line_segment(
-        [
-            Pos2::new(panel.left() + 15.0, centre.y),
-            Pos2::new(panel.right() - 15.0, centre.y),
-        ],
-        grid,
+fn follow_view_controls(ui: &mut egui::Ui, config: &mut Config) -> egui::Response {
+    let response = ui.checkbox(&mut config.follow_viewed_car, "Follow viewed car")
+        .on_hover_text("Follow the car you watch in live single player, including AI. Use cockpit or custom view. Multiplayer still requires your own car.");
+    ui.label(
+        egui::RichText::new("Apply / reconnect to change following. Save settings to remember it.")
+            .small(),
     );
-    painter.line_segment(
-        [
-            Pos2::new(centre.x, panel.top() + 30.0),
-            Pos2::new(centre.x, panel.bottom() - 25.0),
-        ],
-        grid,
-    );
-    if frame.live {
-        for car in &frame.cars {
-            let color = if car.uncertain {
-                Color32::from_rgb(109, 123, 142)
-            } else {
-                match car.threat {
-                    Threat::Nearby => Color32::from_rgb(121, 185, 235),
-                    Threat::Alongside => Color32::from_rgb(252, 193, 94),
-                    Threat::PotentialContact => Color32::from_rgb(255, 99, 99),
-                }
-            };
-            let position =
-                centre + Vec2::new(car.right as f32 * scale, -car.forward as f32 * scale);
-            draw_car(
-                painter,
-                position,
-                scale,
-                car.relative_heading,
-                config,
-                color,
-            );
-        }
-        draw_car(
-            painter,
-            centre,
-            scale,
-            0.0,
-            config,
-            Color32::from_rgb(95, 231, 202),
-        );
-        painter.text(
-            centre,
-            Align2::CENTER_CENTER,
-            "YOU",
-            FontId::proportional(9.0),
-            Color32::from_rgb(9, 32, 34),
-        );
-    } else {
-        painter.text(
-            centre,
-            Align2::CENTER_CENTER,
-            "RADAR PAUSED",
-            FontId::proportional(14.0),
-            Color32::from_rgb(160, 177, 192),
-        );
-    }
-    if !frame.live {
-        painter.text(
-            Pos2::new(centre.x, panel.bottom() - 10.0),
-            Align2::CENTER_BOTTOM,
-            "MCI + OutSim required",
-            FontId::proportional(10.0),
-            Color32::from_rgb(119, 146, 163),
-        );
-    }
-}
-
-fn draw_car(
-    painter: &egui::Painter,
-    centre: Pos2,
-    scale: f32,
-    angle: f64,
-    config: &Config,
-    color: Color32,
-) {
-    let (sin, cos) = angle.sin_cos();
-    let points = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)].map(|(x, y)| {
-        let x = x * config.car_width_m;
-        let y = y * config.car_length_m;
-        centre
-            + Vec2::new(
-                (x * cos - y * sin) as f32 * scale,
-                -(x * sin + y * cos) as f32 * scale,
-            )
-    });
-    painter.add(Shape::convex_polygon(
-        points.to_vec(),
-        color.gamma_multiply(0.85),
-        Stroke::new(1.5_f32, color),
-    ));
-    let nose = centre
-        + Vec2::new(
-            (-sin * config.car_length_m * 0.35) as f32 * scale,
-            (-cos * config.car_length_m * 0.35) as f32 * scale,
-        );
-    painter.circle_filled(nose, 2.0, Color32::WHITE);
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::radar::RadarCar;
+    use crate::overlay::{
+        gap_style,
+        render::{estimated_lap_text, lap_time_text},
+    };
+    use crate::{
+        gaps::GapValue,
+        radar::{RadarCar, RadarFrame, Threat},
+    };
 
     #[test]
     fn hotkey_toggles_shared_visibility_without_changing_enabled_gadgets() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let mut config = Config::default();
         config.gap_ahead.enabled = true;
@@ -1656,8 +1406,48 @@ mod tests {
     }
 
     #[test]
+    fn follow_view_checkbox_changes_the_saved_config() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let mut config = Config::default();
+        let mut rect = Rect::NOTHING;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                rect = follow_view_controls(ui, &mut config).rect;
+            });
+        });
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape,
+            Shape::Text(t) if t.galley.text() == "Follow viewed car")));
+        for pressed in [true, false] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(rect.center()),
+                        egui::Event::PointerButton {
+                            pos: rect.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        follow_view_controls(ui, &mut config);
+                    });
+                },
+            );
+        }
+        assert!(config.follow_viewed_car);
+        let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert!(restored.follow_viewed_car);
+    }
+
+    #[test]
     fn cards_wrap_left_to_right_and_reflow_when_resized() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         let mut app = App::new(
             Config::default(),
             PathBuf::from("unused.toml"),
@@ -1698,8 +1488,24 @@ mod tests {
                 })
                 .collect();
             assert_eq!(cards.len(), 4);
+            let selector = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    Shape::Text(text)
+                        if matches!(
+                            text.galley.job.text.as_str(),
+                            "Classic" | "HUD debug information"
+                        ) =>
+                    {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+                .max_by(|a, b| a.bottom().total_cmp(&b.bottom()))
+                .unwrap();
             assert!(
-                cards[0].top() < 20.0,
+                cards[0].top() > selector.bottom() && cards[0].top() - selector.bottom() < 20.0,
                 "unexpected space before first row: {cards:?}"
             );
             for (index, card) in cards.iter().enumerate() {
@@ -1724,6 +1530,7 @@ mod tests {
     #[test]
     fn opening_panel_fits_cards_and_tabs_keep_actions_in_the_header() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         let mut app = App::new(
             Config::default(),
             PathBuf::from("unused.toml"),
@@ -1885,6 +1692,7 @@ mod tests {
     #[test]
     fn gap_panels_fit_their_own_viewport_at_extreme_scales() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         let value = GapValue {
             seconds: Some(5.0),
             ..Default::default()
@@ -1905,11 +1713,11 @@ mod tests {
                                     ui.max_rect(),
                                     "AHEAD",
                                     &value,
-                                    &GapSettings {
-                                        enabled: true,
+                                    &GapPaintOptions {
                                         scale,
-                                        ..Default::default()
+                                        debug: false,
                                     },
+                                    &gap_style::AHEAD,
                                 );
                             });
                     },
@@ -1927,6 +1735,7 @@ mod tests {
     #[test]
     fn gap_windows_register_independently_and_feedback_does_not_move_or_close_neighbors() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let mut config = Config {
             radar_enabled: false,
@@ -1998,6 +1807,7 @@ mod tests {
     #[test]
     fn separate_gap_callbacks_refresh_without_the_panel_or_radar() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let mut config = Config {
             radar_enabled: false,
@@ -2005,6 +1815,7 @@ mod tests {
         };
         config.gap_ahead.enabled = true;
         config.gap_behind.enabled = true;
+        config.performance_delta.enabled = true;
         let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
         // Use the same deterministic telemetry source for both independent windows.
         app.set_source(OverlaySource::Disconnected);
@@ -2015,20 +1826,31 @@ mod tests {
             app.show_gap_overlays(ctx, true)
         });
         let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
-        let callbacks: Vec<_> = ["gap-ahead-overlay", "gap-behind-overlay"]
-            .iter()
-            .map(|name| {
-                let id = ViewportId::from_hash_of(name);
-                (
-                    id,
-                    output.viewport_output[&id].viewport_ui_cb.clone().unwrap(),
-                )
-            })
-            .collect();
+        let callbacks: Vec<_> = [
+            "gap-ahead-overlay",
+            "gap-behind-overlay",
+            "performance-delta-overlay",
+        ]
+        .iter()
+        .map(|name| {
+            let id = ViewportId::from_hash_of(name);
+            (
+                id,
+                output.viewport_output[&id].viewport_ui_cb.clone().unwrap(),
+            )
+        })
+        .collect();
         let draw = |id, callback: &egui::DeferredViewportUiCallback| {
             let mut input = egui::RawInput {
                 viewport_id: id,
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 76.0))),
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    if id == ViewportId::from_hash_of("performance-delta-overlay") {
+                        Vec2::new(230.0, 100.0)
+                    } else {
+                        Vec2::new(230.0, 76.0)
+                    },
+                )),
                 ..Default::default()
             };
             input.viewports.insert(
@@ -2061,6 +1883,40 @@ mod tests {
             &draw(callbacks[1].0, callbacks[1].1.as_ref()),
             "BEHIND  —"
         ));
+        // The same retained callbacks must observe a changed theme in either direction.
+        for (style, expected) in [
+            (
+                HudStyle::Gt7Inspired,
+                ["AHEAD", "BEHIND", "SESSION BEST / LIVE DELTA"],
+            ),
+            (HudStyle::Classic, ["AHEAD  —", "BEHIND  —", "DELTA  — s"]),
+        ] {
+            for gap in &app.gap_overlays {
+                gap.data.lock().unwrap().config.hud_style = style;
+            }
+            for ((id, callback), label) in callbacks.iter().zip(expected) {
+                assert!(text_present(&draw(*id, callback.as_ref()), label));
+            }
+        }
+        // Retained gap callbacks also observe diagnostics changes without a parent pass.
+        app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
+        for style in [HudStyle::Classic, HudStyle::Gt7Inspired] {
+            for debug in [false, true, false] {
+                for gap in &app.gap_overlays {
+                    let mut data = gap.data.lock().unwrap();
+                    data.config.hud_style = style;
+                    data.config.hud_debug = debug;
+                }
+                for (id, callback) in callbacks.iter().take(2) {
+                    let output = draw(*id, callback.as_ref());
+                    assert_eq!(
+                        output.shapes.iter().any(|shape| matches!(&shape.shape,
+                    Shape::Text(text) if text.galley.job.text.starts_with("ESTIMATE"))),
+                        debug
+                    );
+                }
+            }
+        }
         assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
     }
 
@@ -2096,6 +1952,7 @@ mod tests {
         };
         let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         fn draw(ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>) -> egui::FullOutput {
             ctx.run(
                 egui::RawInput {
@@ -2193,6 +2050,7 @@ mod tests {
     fn header_link_icons_open_the_requested_pages_in_a_new_tab() {
         for link in [ProjectLink::GitHub, ProjectLink::KoFi] {
             let ctx = egui::Context::default();
+            super::super::fonts::install(&ctx);
             let mut rect = Rect::NOTHING;
             let mut draw = |events| {
                 ctx.run(
@@ -2250,6 +2108,7 @@ mod tests {
         assert_eq!(lap_time_text(59.999), "1:00.00");
         for scale in [0.6, 1.0, 2.5] {
             let ctx = egui::Context::default();
+            super::super::fonts::install(&ctx);
             let value = crate::delta::DeltaFrame {
                 seconds: Some(-0.15),
                 trend: Some(-0.1),
@@ -2272,6 +2131,7 @@ mod tests {
                             scale,
                             ..Default::default()
                         },
+                        theme::resolve(HudStyle::Classic).delta,
                     );
                 },
             );
@@ -2307,6 +2167,7 @@ mod tests {
     #[test]
     fn delta_viewport_refreshes_and_closes_independently() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let mut config = Config::default();
         config.performance_delta.enabled = true;
@@ -2357,6 +2218,7 @@ mod tests {
     #[test]
     fn panel_drag_fallback_preserves_clicks_without_a_native_drag_loop() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         let mut config = Config::default();
         let initial_position = Pos2::new(config.overlay_x, config.overlay_y);
         let mut window = OverlayWindow::new(&config);
@@ -2438,6 +2300,7 @@ mod tests {
     #[test]
     fn retained_overlay_callback_updates_without_control_panel_repaints() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let config = Config::default();
         let window = OverlayWindow::new(&config);
@@ -2495,6 +2358,10 @@ mod tests {
         let paused = draw_child();
         assert!(contains_text(&paused, "RADAR PAUSED"));
         assert!(paused.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
+        data.lock().unwrap().config.hud_style = HudStyle::Gt7Inspired;
+        assert!(contains_text(&draw_child(), "Radar"));
+        data.lock().unwrap().config.hud_style = HudStyle::Classic;
+        assert!(!contains_text(&draw_child(), "Radar"));
         assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
 
         data.lock().unwrap().visible = false;
@@ -2504,6 +2371,7 @@ mod tests {
     #[test]
     fn range_and_size_extremes_have_finite_bounded_meshes_without_a_gpu() {
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         let frame = RadarFrame {
             live: true,
             cars: (1..=48)

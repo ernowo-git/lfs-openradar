@@ -45,7 +45,7 @@ struct Reference {
 #[derive(Default)]
 pub struct DeltaEngine {
     track: Option<TrackInfo>,
-    driver: Option<(u8, String)>,
+    driver: Option<(u8, u8, String)>,
     latest: Option<(Car, u64)>,
     current: Option<Lap>,
     completed: Option<Completed>,
@@ -97,7 +97,7 @@ impl DeltaEngine {
     pub fn track_matches(&self, track: &str) -> bool {
         self.track.as_ref().is_some_and(|t| t.track == track)
     }
-    pub fn select_driver(&mut self, driver: Option<(u8, String)>) {
+    pub fn select_driver(&mut self, driver: Option<(u8, u8, String)>) {
         if let Some(driver) = driver {
             if self.driver.as_ref() != Some(&driver) {
                 self.reset_reference();

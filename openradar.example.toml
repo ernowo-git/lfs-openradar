@@ -22,11 +22,18 @@ car_length_m = 4.2
 overlay_x = 40.0
 overlay_y = 160.0
 overlay_size = 320.0
+# Built-in HUD appearance: "classic" or "gt7-inspired". Changes apply immediately.
+hud_style = "classic"
+# Show passage-history and estimate diagnostics in gap gadgets for either HUD style.
+hud_debug = false
 hide_when_background = true
 # Show overlays shortcut. Global on Windows; panel must have focus elsewhere.
 # Supported: Insert, Delete, Home, End, PageUp, PageDown, Space, Enter, Escape,
 # Tab, Backspace, F1..F24, A..Z, 0..9. Use "None" to disable. Restart after editing.
 overlay_toggle_key = "Insert"
+# Follow the watched AI/human in live single player (cockpit/custom view).
+# Multiplayer still requires your own human car. Replays are unsupported.
+follow_viewed_car = false
 radar_enabled = true
 
 # Each gap has its own overlay window. Positions are logical screen pixels.

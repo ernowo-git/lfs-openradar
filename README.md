@@ -40,8 +40,15 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
    Change `overlay_toggle_key` in your TOML file to use another key.
 3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
    turn Position mode off to restore the transparent, click-through overlay.
-4. Adjust size or scale and click **Save settings** to keep your placement.
+4. Choose **Classic** or **GT7-inspired** under **HUD style** in **Gadgets**.
+   Adjust size or scale and click **Save settings** to keep your placement and style.
    Use **Apply / reconnect** after changing connection or telemetry settings.
+
+For hands-free debugging, start a single-player AI race, watch an AI in cockpit
+or custom view, enable **Follow viewed car**, then click **Apply / reconnect**.
+Radar, gaps, and delta follow that driver. Changing drivers clears the lap
+reference. Disable **Hide overlay when LFS is in background** to watch the
+overlay while debugging in another window. See [follow-view usage](docs/usage.md#follow-viewed-car).
 
 The gaps compare adjacent **race-order** drivers on standard circuit layouts.
 The performance delta records a full reference lap from the finish line.

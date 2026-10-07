@@ -55,6 +55,30 @@ Quote paths containing spaces.
 Desktop graphics diagnostics are written to `openradar.graphics.log` beside the
 chosen config path. See [troubleshooting](troubleshooting.md) for log details.
 
+## HUD appearance
+
+Set the top-level `hud_style` before any `[section]` headings:
+
+```toml
+hud_style = "classic" # or "gt7-inspired"
+hud_debug = false # show gap diagnostics in either HUD style when true
+```
+
+Missing settings default to Classic; unknown style names are rejected. The
+**Gadgets** tab's **HUD style** selector applies the choice immediately and
+**Save settings** persists it. External TOML edits require restarting the app.
+Changing themes retains each gadget's position, scale, and enabled state.
+**HUD debug information** in the Gadgets tab controls `hud_debug`. It defaults
+to false and reveals passage-history status and estimate measurement age in gap
+windows for both Classic and GT7-inspired.
+
+For source customization, Classic colors and dimensions remain in
+`src/overlay/radar_style.rs`, `gap_style.rs`, and `delta_style.rs`, with common
+panel defaults in `gadget_style.rs`. The additional theme is defined in
+`src/overlay/gt7_style.rs`. `theme.rs` resolves the selection and `render.rs`
+draws the gadgets. The same selected dimensions drive native windows and
+canvas fitting.
+
 ## InSim password
 
 Place this top-level setting before any `[section]` headings:
@@ -81,6 +105,16 @@ Panel edits followed by **Apply / reconnect** override the launch value for the
 current connection; **Save settings** persists the panel field's value.
 
 ## Telemetry options
+
+`follow_viewed_car = false` is the default. Set it to `true`, or enable
+**Follow viewed car** in the control panel, to follow the watched AI or human
+car in a live single-player session. Use cockpit or custom view. Radar, gaps,
+and delta share that target; switching cars discards the previous reference lap.
+Multiplayer continues requiring your own human car. Replay following is unsupported.
+
+Click **Apply / reconnect** after changing this setting in the panel;
+**Save settings** persists it. The existing `OutSim Mode 1` configuration is
+sufficient. See [the AI debugging flow](usage.md#follow-viewed-car).
 
 `lfs_directory` remembers the folder containing `LFS.exe` for the control panel's
 **LFS startup setup** section. Setting a path or saving TOML does not edit LFS;
@@ -111,6 +145,11 @@ and gray means uncertain telemetry. These are geometric hints, not validated
 collision predictions. Model-specific dimensions and origin offsets still need
 calibration. A height gate reduces bridge/overpass detections but needs track
 testing.
+
+`side_m` accepts 0–100 metres; the desktop slider covers 0–12. Side range controls
+uniform zoom in Classic and horizontal placement in GT7. Detection includes
+half the footprint diagonal to retain cars touching the region.
+Other radar distances and car dimensions must remain positive.
 
 For gadget placement and performance-delta behavior, see the usage guide's
 [gap gadgets](usage.md#gap-gadgets-and-control-panel-grid) and

@@ -148,6 +148,43 @@ fn config_rejects_invalid_boundaries_and_roundtrips() {
 }
 
 #[test]
+fn side_range_accepts_zero_and_filters_at_the_selected_distance() {
+    let mut engine = setup();
+    tick(&mut engine, 20, 0.0);
+    tick(&mut engine, 40, 0.0);
+    for hud_style in [
+        lfs_openradar::config::HudStyle::Classic,
+        lfs_openradar::config::HudStyle::Gt7Inspired,
+    ] {
+        // The fixture opponent is three metres to the right. Range includes
+        // half the footprint diagonal so cars touching the region remain visible.
+        for side_m in [0.0, 0.1, 0.5, 1.0, 3.0, 5.0, 9.0, 12.0] {
+            let config = Config {
+                hud_style,
+                side_m,
+                ..Default::default()
+            };
+            config.validate().unwrap();
+            let radius = config.car_length_m.hypot(config.car_width_m) * 0.5;
+            assert_eq!(
+                engine.frame(100, &config).cars.len(),
+                usize::from(3.0 <= side_m + radius)
+            );
+        }
+    }
+    for side_m in [-0.1, f64::NAN, f64::INFINITY, 100.1] {
+        assert!(
+            Config {
+                side_m,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn interpolation_uses_shortest_arc_across_heading_wrap() {
     let config = Config {
         interpolation_ms: 30,

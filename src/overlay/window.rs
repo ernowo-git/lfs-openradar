@@ -46,23 +46,14 @@ impl GapWindow {
         }
         false
     }
-    pub fn builder(&self, title: &str, visible: bool, editing: bool) -> ViewportBuilder {
-        self.builder_with_height(title, visible, editing, 76.0)
-    }
-    pub fn builder_with_height(
+    pub fn builder(
         &self,
         title: &str,
         visible: bool,
         editing: bool,
-        height: f32,
+        size: Vec2,
     ) -> ViewportBuilder {
-        native_builder(
-            title,
-            self.position,
-            Vec2::new(230.0, height) * self.scale,
-            visible,
-            editing,
-        )
+        native_builder(title, self.position, size * self.scale, visible, editing)
     }
 }
 
@@ -142,6 +133,7 @@ impl OverlayWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::overlay::gap_style;
     use eframe::egui::ViewportCommand;
 
     #[test]
@@ -150,12 +142,13 @@ mod tests {
         config.prepare_gap_positions();
         let mut ahead = GapWindow::new(&config.gap_ahead);
         let behind = GapWindow::new(&config.gap_behind);
-        let mut native_ahead = ahead.builder("Ahead", true, false);
-        let mut native_behind = behind.builder("Behind", true, false);
+        let mut native_ahead = ahead.builder("Ahead", true, false, gap_style::AHEAD.panel.size);
+        let mut native_behind = behind.builder("Behind", true, false, gap_style::BEHIND.panel.size);
         config.gap_ahead.window_x = Some(-1600.0);
         config.gap_ahead.window_y = Some(500.0);
         ahead.set_position(&config.gap_ahead);
-        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", true, false));
+        let (commands, recreate) =
+            native_ahead.patch(ahead.builder("Ahead", true, false, gap_style::AHEAD.panel.size));
         assert!(matches!(
             commands.as_slice(),
             [ViewportCommand::OuterPosition(_)]
@@ -163,7 +156,7 @@ mod tests {
         assert!(!recreate);
         assert!(
             native_behind
-                .patch(behind.builder("Behind", true, false))
+                .patch(behind.builder("Behind", true, false, gap_style::BEHIND.panel.size))
                 .0
                 .is_empty()
         );
@@ -171,12 +164,13 @@ mod tests {
         assert!(!ahead.settle_scale(2.0, Duration::from_secs(1), true));
         assert!(
             native_ahead
-                .patch(ahead.builder("Ahead", true, false))
+                .patch(ahead.builder("Ahead", true, false, gap_style::AHEAD.panel.size))
                 .0
                 .is_empty()
         );
         assert!(ahead.settle_scale(2.0, Duration::from_secs(1), false));
-        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", true, false));
+        let (commands, recreate) =
+            native_ahead.patch(ahead.builder("Ahead", true, false, gap_style::AHEAD.panel.size));
         assert!(matches!(
             commands.as_slice(),
             [ViewportCommand::InnerSize(_)]
@@ -184,7 +178,8 @@ mod tests {
         assert!(!recreate);
         assert_eq!(native_ahead.inner_size, Some(Vec2::new(460.0, 152.0)));
         assert_eq!(native_behind.inner_size, Some(Vec2::new(230.0, 76.0)));
-        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", true, true));
+        let (commands, recreate) =
+            native_ahead.patch(ahead.builder("Ahead", true, true, gap_style::AHEAD.panel.size));
         assert!(matches!(
             commands.as_slice(),
             [
@@ -193,7 +188,8 @@ mod tests {
             ]
         ));
         assert!(!recreate);
-        let (commands, recreate) = native_ahead.patch(ahead.builder("Ahead", false, true));
+        let (commands, recreate) =
+            native_ahead.patch(ahead.builder("Ahead", false, true, gap_style::AHEAD.panel.size));
         assert!(matches!(
             commands.as_slice(),
             [ViewportCommand::Visible(false)]

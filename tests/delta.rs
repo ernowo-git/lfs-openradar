@@ -36,7 +36,7 @@ fn car(progress: f64) -> Car {
 fn setup() -> DeltaEngine {
     let mut e = DeltaEngine::default();
     e.set_track(track());
-    e.select_driver(Some((1, "XRG".into())));
+    e.select_driver(Some((1, 1, "XRG".into())));
     e
 }
 fn race_setup() -> DeltaEngine {
@@ -824,10 +824,10 @@ fn stale_backwards_reset_and_car_or_track_change_are_safe() {
     e.reset_lap();
     assert_eq!(e.frame(end + 200, 250).best_seconds, Some(4.0));
     e.select_driver(None);
-    e.select_driver(Some((1, "XRG".into())));
+    e.select_driver(Some((1, 1, "XRG".into())));
     e.update(&car(81.0), end + 300);
     assert_eq!(e.frame(end + 300, 250).best_seconds, Some(4.0));
-    e.select_driver(Some((1, "XFG".into())));
+    e.select_driver(Some((1, 1, "XFG".into())));
     e.update(&car(81.0), end + 400);
     assert_eq!(e.frame(end + 400, 250).best_seconds, None);
     let mut info = track();

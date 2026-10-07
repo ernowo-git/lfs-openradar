@@ -1,6 +1,24 @@
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, path::Path};
 
+/// Built-in overlay appearance, independent of the desktop renderer.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HudStyle {
+    #[default]
+    Classic,
+    Gt7Inspired,
+}
+
+impl HudStyle {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Gt7Inspired => "GT7-inspired",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GapSettings {
@@ -53,9 +71,14 @@ pub struct Config {
     pub overlay_x: f32,
     pub overlay_y: f32,
     pub overlay_size: f32,
+    pub hud_style: HudStyle,
+    /// Show diagnostic status and measurement age in gap gadgets for either HUD style.
+    pub hud_debug: bool,
     pub hide_when_background: bool,
     /// Key that toggles all overlays; "None" disables the shortcut.
     pub overlay_toggle_key: String,
+    /// Follow the viewed car in live single player; multiplayer still uses your own car.
+    pub follow_viewed_car: bool,
     pub radar_enabled: bool,
     pub gap_ahead: GapSettings,
     pub gap_behind: GapSettings,
@@ -94,8 +117,11 @@ impl Default for Config {
             overlay_x: 40.0,
             overlay_y: 160.0,
             overlay_size: 320.0,
+            hud_style: HudStyle::Classic,
+            hud_debug: false,
             hide_when_background: true,
             overlay_toggle_key: "Insert".into(),
+            follow_viewed_car: false,
             radar_enabled: true,
             gap_ahead: GapSettings::default(),
             gap_behind: GapSettings::default(),
@@ -235,8 +261,10 @@ impl Config {
         {
             return Err("OutSim options must include TIME and MAIN, or be zero for legacy".into());
         }
+        if !self.side_m.is_finite() || !(0.0..=100.0).contains(&self.side_m) {
+            return Err("Radar side range must be finite and 0..100 metres".into());
+        }
         for v in [
-            self.side_m,
             self.front_m,
             self.rear_m,
             self.height_m,

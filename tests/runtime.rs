@@ -14,6 +14,15 @@ use support::*;
 
 #[test]
 fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
+    mock_lfs(false);
+}
+
+#[test]
+fn mock_lfs_follows_viewed_ai_and_missing_outsim_pauses() {
+    mock_lfs(true);
+}
+
+fn mock_lfs(follow: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let udp_reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
     let config = Config {
@@ -23,6 +32,7 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
         interpolation_ms: 20,
         stale_ms: 100,
         hide_ms: 200,
+        follow_viewed_car: follow,
         ..Default::default()
     };
     let destination = config.outsim_bind;
@@ -50,18 +60,20 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
             &requests,
             &[1, 3, 1, 13, 1, 3, 1, 14, 1, 3, 1, 7, 1, 3, 1, 19]
         );
-        for (id, kind) in [(1, 0), (2, 6)] {
+        for (id, kind) in [(1, 0), (2, if follow { 2 } else { 6 })] {
             let mut npl = packet(21, 76);
+            npl[2] = 1;
             npl[3] = id;
             npl[4] = id;
             npl[5] = kind;
             npl[73] = 2;
+            npl[8..11].copy_from_slice(if id == 2 { b"AI2" } else { b"You" });
             tcp.write_all(&npl).unwrap();
         }
         let mut state = packet(5, 28);
         state[8] = 1;
         state[10] = 3;
-        state[11] = 1;
+        state[11] = if follow { 2 } else { 1 };
         state[20..23].copy_from_slice(b"BL1");
         tcp.write_all(&state).unwrap();
         let mut track = packet(17, 28);
@@ -107,9 +119,16 @@ fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
     assert_eq!(live.frame.cars.len(), 1);
     assert_eq!(live.version, "0.7G");
     assert_eq!(live.malformed_packets, 0);
-    assert_eq!(live.gaps.ahead.status, "No driver");
-    assert_eq!(live.gaps.behind.position, Some(2));
-    assert_eq!(live.gaps.behind.status, "Building passage history");
+    if follow {
+        assert_eq!(live.frame.driver.as_deref(), Some("AI2"));
+        assert_eq!(live.gaps.ahead.position, Some(1));
+        assert_eq!(live.gaps.ahead.status, "Building passage history");
+        assert_eq!(live.gaps.behind.status, "No driver");
+    } else {
+        assert_eq!(live.gaps.ahead.status, "No driver");
+        assert_eq!(live.gaps.behind.position, Some(2));
+        assert_eq!(live.gaps.behind.status, "Building passage history");
+    }
     outsim_enabled.store(false, Ordering::Relaxed);
     thread::sleep(Duration::from_millis(350));
     let paused = overlay_reader.snapshot();

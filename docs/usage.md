@@ -2,6 +2,95 @@
 
 For installation and a quick start, see [the README](../README.md).
 
+## HUD styles
+
+Choose **Classic** or **GT7-inspired** from **HUD style** at the top of the
+**Gadgets** tab. All four gadgets change immediately, and their cards preview
+the selected appearance. Click **Save settings** to remember the selection;
+reconnecting LFS is unnecessary. Positions, scales, enabled gadgets, and
+position mode are retained. Classic remains the default for existing files.
+
+GT7-inspired uses transparent backgrounds, boxed driver positions, fading gap
+rows, digital reference-time and signed delta cells, and a larger estimated-lap
+readout. It also adds a red directional player marker, blue opponent markers,
+and pale radar guides. Left/right sectors of the outer circle indicate nearby
+or alongside cars in amber and potential contact in red; gray indicates uncertain
+telemetry. The strongest warning appears on each occupied side, and opponent
+borders stay blue. Faster lap deltas use blue text and slower deltas use red text
+on grey-black timing cells at 30% opacity.
+
+The theme is inspired by GT7's HUD; telemetry and calculations still come from LFS.
+The session-best time is the reference lap; the adjacent delta is the live
+comparison against it. The estimated lap appears beneath the timing cells,
+without a BEST badge, trend meter, or gaining/losing footer. Ahead intervals
+display `+`, behind intervals display `−`. Enable **HUD debug information** in
+the Gadgets tab to show gap diagnostics such as **Building passage history**
+and **ESTIMATE** with measurement age. They are hidden by default in both
+Classic and GT7-inspired. The reference time and signed intervals
+use milliseconds; this display precision does not change telemetry accuracy.
+
+GT7 colors, cell sizes, borders, offsets, and type sizes are centralized in
+[`gt7_style.rs`](../src/overlay/gt7_style.rs). Gap windows use a base size of
+320 × 106 logical pixels, and delta uses 440 × 132 before your scale is applied.
+Roboto and Orbitron are embedded for this theme, with
+[font licenses](font-licenses.md) included in release archives. Radar's cosmetic
+vertical strip remains removed.
+
+The proximity radar follows the supplied animated reference: three arcs fading
+toward the top, a horizontal guide, compact
+directional markers, and a bottom **Radar** label. Marker size is configurable
+through `RADAR.proximity.marker_size` and scales with the radar window. The
+symbols show live car locations and headings; they are not physical car
+footprints. The arcs are decorative guides, not a track map or metre markings.
+The blue panel backing is disabled so the HUD floats over the game. Radar has
+a radial black-to-grey background, with **40% opacity at the centre** fading to
+**0% opacity at the outer circle**. Edit the colors and `center_opacity` /
+`edge_opacity` in `RADAR.proximity.background`; set it to `None` for a fully
+transparent radar background. Gap position/name rows and reference/live-delta
+cells use `CELL_BACKGROUND` in `gt7_style.rs`: neutral grey-black at 30% opacity.
+Gap interval rows fade from transparent to the same 30% backing. Radar sector
+size, fill opacity, outline, and warning colors are editable through
+`RADAR.proximity.side_warnings`: `inner_radius` controls thickness as a fraction
+of the outer circle, and `half_angle` controls half the angular span in radians.
+
+The current overlay renderer composites transparency without backdrop blur.
+Windows' documented [DWM system backdrop API](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type)
+requires Windows 11 build 22621+ and applies its material across the window.
+Blur confined to these cells would require additional native compositor
+integration; this theme uses the requested grey-black fallback.
+
+![GT7-inspired gadget preview with sample telemetry](images/gt7-hud-preview.png)
+
+The preview uses the actual gadget painters at their base sizes, with sample
+driver/timing values to show both faster and slower delta states.
+
+## Follow viewed car
+
+To debug with real driving telemetry while LFS drives for you:
+
+1. Start a live **Single Player** race with several AI drivers on a standard circuit.
+2. Press **Tab** to select an AI, then **V** to select cockpit or custom view.
+3. Enable **Follow viewed car** in the control panel and click **Apply / reconnect**.
+   Click **Save settings** to remember it.
+4. Confirm the panel shows the followed driver's name and both telemetry ages
+   update. Radar uses that car as its origin; gaps use its race-order neighbors.
+5. Stay on that AI through a full clean recorded lap to establish its delta
+   reference. Switching drivers clears the reference, including between AI cars
+   of the same model. Returning to an earlier driver starts a new reference.
+
+Pause and unsupported cameras hide live output and discard the unfinished lap.
+Returning to the same surviving car retains its best clean reference. A race
+restart, track change, disconnect, or driver replacement clears the reference.
+The AI needs a usable path; use a standard circuit for gaps and delta.
+
+Disable **Hide overlay when LFS is in background** to keep the overlays visible
+while working in your debugger. LFS must also keep running when it loses focus;
+if telemetry stops, check whether the game paused.
+
+The option defaults off. Multiplayer still uses your own human-driven car,
+even with the option enabled; remote-car following is unavailable. Replays
+remain unsupported. OutSim and InSim must both supply matching, fresh data.
+
 ## Control panel and gadget grid
 
 The **Gadgets** tab presents Radar, Gap ahead, Gap behind, and Performance delta
@@ -164,7 +253,13 @@ background. Position mode retains the dark radar backing for placement; the
 control-panel preview also keeps its backing. The **Move radar**
 handle and **X/Y** controls in the control panel remain available as alternatives.
 **Radar size** applies once dragging stops and the value has
-settled for 250 ms. **Side range (m)** changes the drawing scale immediately.
+settled for 250 ms. **Side range (m)** changes zoom immediately throughout
+0–12 metres in both themes. Classic zooms uniformly: distance guides remain
+circular and car footprints keep their proportions. At tight zoom, distant
+front/rear cars can be outside the visible square; front/rear settings still
+control detection. GT7 adjusts horizontal placement independently, keeping
+vertical placement stable, compact arrow symbols, and decorative circular guides.
+Zero is a valid side range; detection still includes car-footprint padding.
 Use **Save settings**
 to write the configuration file used at launch (see [Configuration](configuration.md)). Use **Apply / reconnect** after changing live
 settings, including interpolation and detection range.

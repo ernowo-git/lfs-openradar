@@ -114,7 +114,7 @@ fn run(
     stop: Arc<AtomicBool>,
 ) {
     let start = Instant::now();
-    let mut engine = Engine::default();
+    let mut engine = Engine::new(config.follow_viewed_car);
     let mut stats = Snapshot::default();
     let mut connection: Option<TcpStream> = None;
     let mut framer = Framer::default();
