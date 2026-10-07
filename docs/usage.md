@@ -2,12 +2,27 @@
 
 For installation and a quick start, see [the README](../README.md).
 
-## Gap gadgets and control-panel grid
+## Control panel and gadget grid
 
-The control panel presents Radar, Gap ahead, and Gap behind cards in insertion
-order. Cards fill each row from left to right, wrap to the left of the next row
+The **Gadgets** tab presents Radar, Gap ahead, Gap behind, and Performance delta
+cards in insertion order. Cards fill each row from left to right, wrap to the left of the next row
 when another card cannot fit, and reflow when the window is resized. Narrow
-windows use one column; extra rows and global controls are vertically scrollable.
+windows use one column; extra rows are vertically scrollable. The panel opens
+with space for all four cards and fits its height to the rendered controls,
+within the monitor's available size. You can resize it afterward.
+
+The header keeps **Apply / reconnect**, **Save settings**, **Quit**, and connection
+status visible on either tab, including when the content is scrolled. Apply is
+disabled in the demo, which has no network connection. The **Settings** tab holds
+**Show overlays**, background hiding, interpolation, the InSim password, and
+**LFS startup setup**. Radar position mode, X/Y, size, and side range are inside
+the Radar card.
+
+**Interpolation (ms)** smooths radar motion by displaying slightly older
+telemetry between received updates. Higher values can reduce jitter but add
+display delay. The default is 60 ms; 0 ms uses the latest time shared by MCI
+and OutSim. It does not predict future positions. Click **Apply / reconnect**
+after changing interpolation in live mode.
 
 Radar, Gap ahead, and Gap behind each have a separate transparent overlay window.
 Enable the gap gadgets from their cards, turn on each card's **Position mode**,

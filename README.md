@@ -11,12 +11,18 @@ primary platform; Linux/X11 support is experimental.
 
 ## Quick preview
 
-![OpenRadar demo showing the control panel, radar, gap gadgets, and performance delta](docs/images/preview.png)
+![OpenRadar demo showing the control panel, radar, gap gadgets, and performance delta](assets/preview.png)
 
 Synthetic demo with all gadgets enabled. The delta needs a fully recorded lap
 before it can show a comparison.
 
 <!-- Replace the preview image with an animated GIF when available. -->
+
+## Features
+
+- Proximity radar
+- Real-time gap ahead/behind indicator
+- Lap performance delta
 
 ## Usage
 
@@ -32,7 +38,8 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
 
 1. Start LFS and drive your own car in cockpit or custom view. Confirm that the
    MCI and OutSim age indicators are updating.
-2. Enable **Show overlays** and the gadgets you want in the control panel.
+2. Enable **Show overlays** in **Settings**, then enable the cards you want
+   in **Gadgets**.
 3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
    turn Position mode off to restore the transparent, click-through overlay.
 4. Adjust size or scale and click **Save settings** to keep your placement.
@@ -90,7 +97,7 @@ file uses built-in defaults and is created when you save. See the
 
 ### Connect LFS
 
-1. Open **LFS startup setup** in OpenRadar, select the folder containing
+1. Open **Settings → LFS startup setup** in OpenRadar, select the folder containing
    `LFS.exe`, and click **Enable InSim at startup**. Restart LFS to activate it.
    For the current session only, type `/insim 29999` in LFS instead.
 2. With LFS closed, configure OutSim in its `cfg.txt` to match the defaults below,

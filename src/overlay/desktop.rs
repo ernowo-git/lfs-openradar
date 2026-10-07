@@ -15,6 +15,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+const PANEL_MARGIN: f32 = 20.0;
+const CARD_WIDTH: f32 = 300.0;
+const CARD_HEIGHT: f32 = 464.0;
+const CARD_SPACING: f32 = 12.0;
+
+fn initial_panel_size() -> Vec2 {
+    Vec2::new(
+        GADGETS.len() as f32 * CARD_WIDTH
+            + (GADGETS.len() - 1) as f32 * CARD_SPACING
+            + PANEL_MARGIN * 2.0,
+        CARD_HEIGHT + 180.0,
+    )
+}
+
 pub fn run(
     config: Config,
     config_path: PathBuf,
@@ -41,7 +55,7 @@ pub fn run(
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_title("LFS OpenRadar · Control panel")
-            .with_inner_size([1020.0, 760.0])
+            .with_inner_size(initial_panel_size())
             .with_min_inner_size([380.0, 400.0])
             // eframe derives the shared painter's alpha support from the root
             // viewport, even when only a child needs a transparent background.
@@ -96,6 +110,14 @@ struct App {
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
     gap_overlays: [GapOverlay; 3],
+    tab: ControlTab,
+    opening_layout_passes: u8,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControlTab {
+    Gadgets,
+    Settings,
 }
 
 #[derive(Clone)]
@@ -197,6 +219,8 @@ impl App {
             folder_picker: None,
             overlay_enabled: demo,
             edit_overlay: false,
+            tab: ControlTab::Gadgets,
+            opening_layout_passes: 0,
         };
         if !demo {
             app.connect();
@@ -456,10 +480,185 @@ impl App {
             }
         }
     }
+    fn control_panel(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
+        let header = egui::TopBottomPanel::top("control-header")
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(12, 18, 28))
+                    .inner_margin(PANEL_MARGIN),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("LFS OpenRadar");
+                        ui.label(
+                            egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                                .small()
+                                .color(Color32::GRAY),
+                        );
+                    });
+                    ui.add_space(12.0);
+                    if ui
+                        .add_enabled(self.demo.is_none(), egui::Button::new("Apply / reconnect"))
+                        .clicked()
+                    {
+                        self.connect();
+                    }
+                    if ui.button("Save settings").clicked() {
+                        self.message = Some(match self.config.save(&self.config_path) {
+                            Ok(()) => format!("Saved {}", self.config_path.display()),
+                            Err(error) => error,
+                        });
+                    }
+                    if ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if self.demo.is_some() {
+                        ui.colored_label(
+                            Color32::from_rgb(92, 204, 222),
+                            "DEMO / NO NETWORK CONNECTION",
+                        );
+                    }
+                    ui.label(&snapshot.frame.status);
+                    badge(ui, "MCI", snapshot.frame.mci_age_ms, self.config.stale_ms);
+                    badge(
+                        ui,
+                        "OutSim",
+                        snapshot.frame.outsim_age_ms,
+                        self.config.stale_ms,
+                    );
+                    if let Some(driver) = &snapshot.frame.driver {
+                        ui.label(driver);
+                    }
+                });
+                if let Some(message) = self.message.as_ref().or(snapshot.error.as_ref()) {
+                    ui.colored_label(Color32::from_rgb(255, 180, 120), message);
+                }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.tab, ControlTab::Gadgets, "Gadgets");
+                    ui.selectable_value(&mut self.tab, ControlTab::Settings, "Settings");
+                });
+            });
+        let content = egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(12, 18, 28))
+                    .inner_margin(PANEL_MARGIN),
+            )
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("control-content")
+                    .show(ui, |ui| match self.tab {
+                        ControlTab::Gadgets => self.gadget_cards(ui, snapshot),
+                        ControlTab::Settings => self.settings_controls(ui, snapshot),
+                    })
+                    .content_size
+            });
+        // Measure the real layout after egui's grid has settled. Fit once at
+        // startup, leaving later user resizing and tab switches under user control.
+        if self.opening_layout_passes == 0 {
+            let current = ctx.input(|input| input.content_rect().size());
+            let fitted =
+                fit_panel_to_monitor(current, ctx.input(|input| input.viewport().monitor_size));
+            if fitted != current {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted));
+            }
+        }
+        if self.opening_layout_passes < 4 {
+            self.opening_layout_passes += 1;
+            if self.opening_layout_passes == 4 {
+                let current = ctx.input(|input| input.content_rect().size());
+                let desired = Vec2::new(
+                    current.x,
+                    header.response.rect.height() + content.inner.y + PANEL_MARGIN * 2.0,
+                );
+                let fitted =
+                    fit_panel_to_monitor(desired, ctx.input(|input| input.viewport().monitor_size));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted.ceil()));
+            }
+        }
+    }
+
+    fn settings_controls(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        ui.heading("Overlay visibility");
+        if ui
+            .checkbox(&mut self.overlay_enabled, "Show overlays")
+            .changed()
+        {
+            log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
+        }
+        ui.checkbox(
+            &mut self.config.hide_when_background,
+            "Hide overlay when LFS is in background",
+        );
+        if super::game_foreground().is_none() {
+            ui.label(
+                egui::RichText::new(
+                    "Foreground detection unavailable here; overlay visibility is manual.",
+                )
+                .small()
+                .color(Color32::YELLOW),
+            );
+        }
+        ui.add_space(12.0);
+        ui.heading("Telemetry");
+        ui.add(egui::Slider::new(&mut self.config.interpolation_ms, 0..=200).text("Interpolation (ms)"))
+            .on_hover_text("Smooths radar motion by drawing slightly older telemetry between received updates. More delay can reduce jitter but makes the radar respond later. No positions are predicted.");
+        ui.label("Interpolation smooths radar motion by delaying the display. Higher values can reduce jitter but add latency; 0 ms uses the latest shared telemetry time.");
+        ui.label(
+            egui::RichText::new(
+                "Default: 60 ms. Use Apply / reconnect after changing this setting in live mode.",
+            )
+            .small(),
+        );
+        ui.horizontal_wrapped(|ui| {
+            ui.label("InSim password");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.config.insim_password.0)
+                    .password(true)
+                    .hint_text("LFS multiplayer admin password"),
+            );
+        });
+        if snapshot
+            .error
+            .as_deref()
+            .into_iter()
+            .chain(self.message.as_deref())
+            .any(|error| error.contains("password"))
+        {
+            ui.colored_label(
+                Color32::from_rgb(240, 178, 85),
+                "Check \"Game Admin\" in your LFS folder's cfg.txt for the password.",
+            );
+        }
+        ui.label(
+            egui::RichText::new(
+                "Save settings stores the password in TOML. Apply / reconnect uses it.",
+            )
+            .small(),
+        );
+        ui.add_space(12.0);
+        self.startup_setup_controls(ui);
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(format!(
+                "MCI sets {} · OutSim {} · rejected {} · malformed {}",
+                snapshot.mci_sets,
+                snapshot.outsim_samples,
+                snapshot.rejected_outsim,
+                snapshot.malformed_packets
+            ))
+            .small(),
+        );
+    }
+
     fn gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
         let delta_value = delta_value(&snapshot.delta);
-        let spacing = 12.0;
-        let columns = grid_columns(ui.available_width(), 300.0, spacing);
+        let spacing = CARD_SPACING;
+        let columns = grid_columns(ui.available_width(), CARD_WIDTH, spacing).min(GADGETS.len());
         let width = (ui.available_width() - spacing * (columns - 1) as f32) / columns as f32;
         egui::Grid::new("gadget-cards")
             .num_columns(columns)
@@ -469,7 +668,7 @@ impl App {
                     ui.allocate_ui_with_layout(
                         // egui centers cells vertically; reserve the full card
                         // height so a zero-height allocation cannot add a gap.
-                        Vec2::new(width, 354.0),
+                        Vec2::new(width, CARD_HEIGHT),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
                             egui::Frame::new()
@@ -478,7 +677,7 @@ impl App {
                                 .inner_margin(12.0)
                                 .show(ui, |ui| {
                                     ui.set_width((width - 24.0).max(1.0));
-                                    ui.set_min_height(330.0);
+                                    ui.set_min_height(CARD_HEIGHT - 24.0);
                                     ui.heading(gadget.title());
                                     ui.add_space(6.0);
                                     match gadget {
@@ -502,6 +701,15 @@ impl App {
                                                 )
                                                 .text("Side range (m)"),
                                             );
+                                            if ui.checkbox(&mut self.edit_overlay, "Radar position mode").changed() {
+                                                log::info!(target: "openradar_graphics", "Position mode {}", self.edit_overlay);
+                                            }
+                                            ui.label(egui::RichText::new(
+                                                "Enable Position mode to drag the radar title bar or use Move radar."
+                                            ).small());
+                                            position_controls(ui, &mut self.config, &mut self.overlay_window, self.edit_overlay);
+                                            ui.add(egui::Slider::new(&mut self.config.overlay_size, 220.0..=800.0)
+                                                .text("Radar size"));
                                         }
                                         Gadget::Ahead | Gadget::Behind | Gadget::Delta => {
                                             let (settings, value, gap) = if *gadget == Gadget::Ahead
@@ -599,6 +807,11 @@ impl Gadget {
 }
 fn grid_columns(width: f32, card_width: f32, spacing: f32) -> usize {
     (((width + spacing) / (card_width + spacing)).floor() as usize).max(1)
+}
+fn fit_panel_to_monitor(desired: Vec2, monitor: Option<Vec2>) -> Vec2 {
+    monitor.map_or(desired, |monitor| {
+        desired.min((monitor - Vec2::new(64.0, 100.0)).max(Vec2::new(380.0, 400.0)))
+    })
 }
 fn overlay_visible(
     master: bool,
@@ -741,120 +954,7 @@ impl eframe::App for App {
                 .map(Runtime::snapshot)
                 .unwrap_or_default()
         };
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(12, 18, 28))
-                    .inner_margin(20.0),
-            )
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("LFS OpenRadar");
-                ui.label(
-                    egui::RichText::new(if self.demo.is_some() {
-                        "DEMO / NO NETWORK CONNECTION"
-                    } else {
-                        "LOCAL PROXIMITY RADAR"
-                    })
-                    .color(Color32::from_rgb(92, 204, 222))
-                    .small(),
-                );
-                ui.add_space(8.0);
-                ui.label(&snapshot.frame.status);
-                ui.horizontal(|ui| {
-                    badge(ui, "MCI", snapshot.frame.mci_age_ms, self.config.stale_ms);
-                    badge(
-                        ui,
-                        "OutSim",
-                        snapshot.frame.outsim_age_ms,
-                        self.config.stale_ms,
-                    );
-                    if let Some(driver) = &snapshot.frame.driver {
-                        ui.label(driver);
-                    }
-                });
-                ui.add_space(6.0);
-                self.gadget_cards(ui, &snapshot);
-                ui.add_space(8.0);
-                self.startup_setup_controls(ui);
-                if self.demo.is_none() {
-                    ui.horizontal(|ui| {
-                        ui.label("InSim password");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.insim_password.0)
-                                .password(true)
-                                .hint_text("LFS multiplayer admin password"),
-                        );
-                    });
-                    ui.label(
-                        egui::RichText::new(
-                            "Save settings stores the password in TOML. Apply / reconnect uses it.",
-                        )
-                        .small(),
-                    );
-                }
-                ui.horizontal(|ui| {
-                    if ui.checkbox(&mut self.overlay_enabled, "Show overlays").changed() {
-                        log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
-                    }
-                    if ui.checkbox(&mut self.edit_overlay, "Radar position mode").changed() {
-                        log::info!(target: "openradar_graphics", "Position mode {}", self.edit_overlay);
-                    }
-                });
-                if self.edit_overlay {
-                    ui.label(egui::RichText::new("Drag the radar title bar, use Move radar, or edit X/Y.").small());
-                }
-                ui.checkbox(
-                    &mut self.config.hide_when_background,
-                    "Hide overlay when LFS is in background",
-                );
-                if super::game_foreground().is_none() {
-                    ui.label(
-                        egui::RichText::new(
-                            "Foreground detection unavailable here; overlay visibility is manual.",
-                        )
-                        .small()
-                        .color(Color32::YELLOW),
-                    );
-                }
-                position_controls(ui, &mut self.config, &mut self.overlay_window, self.edit_overlay);
-                ui.add(
-                    egui::Slider::new(&mut self.config.overlay_size, 220.0..=800.0)
-                        .text("Radar size"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut self.config.interpolation_ms, 0..=200)
-                        .text("Interpolation (ms)"),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("Save settings").clicked() {
-                        self.message = Some(match self.config.save(&self.config_path) {
-                            Ok(()) => format!("Saved {}", self.config_path.display()),
-                            Err(error) => error,
-                        });
-                    }
-                    if self.demo.is_none() && ui.button("Apply / reconnect").clicked() {
-                        self.connect();
-                    }
-                    if ui.button("Quit").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                ui.label(
-                    egui::RichText::new(format!(
-                        "MCI sets {} · OutSim {} · rejected {} · malformed {}",
-                        snapshot.mci_sets,
-                        snapshot.outsim_samples,
-                        snapshot.rejected_outsim,
-                        snapshot.malformed_packets
-                    ))
-                    .small(),
-                );
-                if let Some(message) = self.message.as_ref().or(snapshot.error.as_ref()) {
-                    ui.colored_label(Color32::from_rgb(255, 180, 120), message);
-                }
-                });
-            });
+        self.control_panel(ctx, &snapshot);
         if let Some(path) = self.folder_picker.as_mut().and_then(|p| p.show(ctx)) {
             self.config.lfs_directory = path.display().to_string();
             self.setup_plan = None;
@@ -1115,21 +1215,22 @@ fn position_controls(
                 .prefix("Y ")
                 .range(-8000.0..=8000.0),
         );
-        let drag = editing.then(|| {
-            ui.add(egui::Button::new("Move radar").sense(egui::Sense::drag()))
-                .on_hover_cursor(egui::CursorIcon::Grab)
-        });
-        let delta = drag.as_ref().map_or(Vec2::ZERO, egui::Response::drag_delta);
+        if x.changed() || y.changed() {
+            window.set_position(config);
+        }
+    });
+    editing.then(|| {
+        let drag = ui
+            .add(egui::Button::new("Move radar").sense(egui::Sense::drag()))
+            .on_hover_cursor(egui::CursorIcon::Grab);
+        let delta = drag.drag_delta();
         if delta != Vec2::ZERO {
             config.overlay_x = (config.overlay_x + delta.x).clamp(-8000.0, 8000.0);
             config.overlay_y = (config.overlay_y + delta.y).clamp(-8000.0, 8000.0);
-        }
-        if x.changed() || y.changed() || delta != Vec2::ZERO {
             window.set_position(config);
         }
         drag
     })
-    .inner
 }
 
 fn badge(ui: &mut egui::Ui, name: &str, age: Option<u64>, stale: u64) {
@@ -1294,7 +1395,9 @@ mod tests {
             None,
         );
         let snapshot = Demo::default().snapshot(7_000, &app.config);
-        for (width, expected_columns) in [(340.0, 1), (680.0, 2), (1020.0, 3), (340.0, 1)] {
+        for (width, expected_columns) in
+            [(340.0, 1), (680.0, 2), (1020.0, 3), (1276.0, 4), (340.0, 1)]
+        {
             let mut output = egui::FullOutput::default();
             // Give egui's remembered grid measurements time to settle after reflow.
             for _ in 0..3 {
@@ -1345,6 +1448,167 @@ mod tests {
         }
         assert_eq!(grid_columns(611.9, 300.0, 12.0), 1);
         assert_eq!(grid_columns(612.0, 300.0, 12.0), 2);
+    }
+
+    #[test]
+    fn opening_panel_fits_cards_and_tabs_keep_actions_in_the_header() {
+        let ctx = egui::Context::default();
+        let mut app = App::new(
+            Config::default(),
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        let snapshot = Demo::default().snapshot(7_000, &app.config);
+        let mut size = initial_panel_size();
+        let mut output = egui::FullOutput::default();
+        for _ in 0..6 {
+            output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |ctx| app.control_panel(ctx, &snapshot),
+            );
+            for command in &output.viewport_output[&ViewportId::ROOT].commands {
+                if let egui::ViewportCommand::InnerSize(fitted) = command {
+                    size = *fitted;
+                }
+            }
+        }
+        let texts = |output: &egui::FullOutput| -> Vec<(String, Rect)> {
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.job.text.clone(),
+                            text.galley.rect.translate(text.pos.to_vec2()),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        let gadget_texts = texts(&output);
+        let radar_card = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Rect(rect) if rect.fill == Color32::from_rgb(20, 29, 43) => Some(rect.rect),
+                _ => None,
+            })
+            .unwrap();
+        for label in [
+            "Radar position mode",
+            "Position",
+            "Radar size",
+            "Side range (m)",
+        ] {
+            let (_, rect) = gadget_texts.iter().find(|(text, _)| text == label).unwrap();
+            assert!(
+                radar_card.contains_rect(*rect),
+                "{label} must fit inside the Radar card"
+            );
+        }
+        for shape in &output.shapes {
+            if let Shape::Rect(rect) = &shape.shape
+                && rect.fill == Color32::from_rgb(20, 29, 43)
+            {
+                assert!(rect.rect.bottom() <= size.y, "opening panel clips a card");
+            }
+        }
+        assert!(!gadget_texts.iter().any(|(text, _)| text == "Show overlays"));
+        app.tab = ControlTab::Settings;
+        let settings = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(380.0, 900.0))),
+                ..Default::default()
+            },
+            |ctx| app.control_panel(ctx, &snapshot),
+        );
+        let settings_texts = texts(&settings);
+        for label in ["Apply / reconnect", "Save settings", "Quit"] {
+            let (_, gadget_rect) = gadget_texts.iter().find(|(text, _)| text == label).unwrap();
+            assert!(gadget_rect.bottom() < radar_card.top());
+            let (_, settings_rect) = settings_texts
+                .iter()
+                .find(|(text, _)| text == label)
+                .unwrap();
+            assert!(
+                settings_rect.bottom() < 150.0,
+                "{label} must remain in the narrow header"
+            );
+        }
+        for label in [
+            "Show overlays",
+            "LFS startup setup",
+            "Interpolation (ms)",
+            "InSim password",
+        ] {
+            assert!(settings_texts.iter().any(|(text, _)| text == label));
+        }
+        assert!(
+            settings_texts
+                .iter()
+                .any(|(text, _)| text.contains("reduce jitter but add latency"))
+        );
+        assert!(
+            !settings_texts
+                .iter()
+                .any(|(text, _)| text == "Radar position mode")
+        );
+        assert!(
+            settings.viewport_output[&ViewportId::ROOT]
+                .commands
+                .iter()
+                .all(|command| { !matches!(command, egui::ViewportCommand::InnerSize(_)) }),
+            "tab switches must preserve the user's window size"
+        );
+        let constrained =
+            fit_panel_to_monitor(initial_panel_size(), Some(Vec2::new(1024.0, 768.0)));
+        assert!(constrained.x <= 960.0 && constrained.y <= 668.0);
+
+        // Save through the header button, using the same config field edited by
+        // the masked password input, and verify persistence to the launch path.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let config_path = std::env::temp_dir().join(format!("openradar-password-ui-{stamp}.toml"));
+        app.config_path = config_path.clone();
+        app.config.insim_password.0 = "test-password".into();
+        let save_position = settings_texts
+            .iter()
+            .find(|(text, _)| text == "Save settings")
+            .unwrap()
+            .1
+            .center();
+        for pressed in [true, false] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(380.0, 400.0))),
+                    events: vec![
+                        egui::Event::PointerMoved(save_position),
+                        egui::Event::PointerButton {
+                            pos: save_position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| app.control_panel(ctx, &snapshot),
+            );
+        }
+        let restored = Config::load(&config_path).unwrap();
+        assert_eq!(restored.insim_password.0, "test-password");
+        assert!(app.message.as_ref().unwrap().starts_with("Saved "));
+        std::fs::remove_file(config_path).unwrap();
     }
 
     #[test]
