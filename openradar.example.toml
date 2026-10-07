@@ -23,6 +23,10 @@ overlay_x = 40.0
 overlay_y = 160.0
 overlay_size = 320.0
 hide_when_background = true
+# Show overlays shortcut. Global on Windows; panel must have focus elsewhere.
+# Supported: Insert, Delete, Home, End, PageUp, PageDown, Space, Enter, Escape,
+# Tab, Backspace, F1..F24, A..Z, 0..9. Use "None" to disable. Restart after editing.
+overlay_toggle_key = "Insert"
 radar_enabled = true
 
 # Each gap has its own overlay window. Positions are logical screen pixels.

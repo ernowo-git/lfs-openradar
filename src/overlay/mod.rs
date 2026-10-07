@@ -6,6 +6,8 @@ mod folder_picker;
 #[cfg(feature = "desktop")]
 mod graphics_log;
 #[cfg(feature = "desktop")]
+mod hotkey;
+#[cfg(feature = "desktop")]
 mod window;
 #[cfg(feature = "desktop")]
 pub use desktop::run;

@@ -37,6 +37,26 @@ logical screen pixels. Fresh gap windows start to the right of the radar.
 
 **Show overlays** controls all windows, and each card's Enabled setting controls
 its own gadget. Closing a gadget window in Position mode disables that gadget.
+Press **Insert** to toggle **Show overlays**. On Windows this also works while
+LFS has focus; on other desktop backends the control panel must have focus.
+Holding the key toggles once until you release it. The shortcut uses an
+unmodified key and follows the same background-hiding and Position mode rules
+as the checkbox. Individual gadget Enabled settings and telemetry recording
+are preserved when all overlays are hidden.
+
+To change the shortcut, edit this top-level setting in your TOML configuration
+and restart OpenRadar:
+
+```toml
+overlay_toggle_key = "Insert"
+```
+
+Supported names are `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`,
+`Space`, `Enter`, `Escape`, `Tab`, `Backspace`, `F1` through `F24`, letters `A`
+through `Z`, and digits `0` through `9`. Names are case-insensitive. For example,
+use `"F8"` to change the key or `"None"` to disable the shortcut. Existing
+configuration files that omit this setting default to `"Insert"`.
+
 The radar retains its own size and position when gaps are enabled or moved.
 All windows share one telemetry connection, but repaint independently; hidden
 windows keep their existing graphics surfaces for reuse. Background hiding

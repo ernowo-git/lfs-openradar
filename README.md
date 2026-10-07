@@ -11,7 +11,7 @@ primary platform; Linux/X11 support is experimental.
 
 ## Quick preview
 
-![OpenRadar in Live for Speed showing the radar, gap gadgets, and performance delta](assets/preview.gif)
+<img src="assets/preview.gif" alt="OpenRadar in Live for Speed showing the radar, gap gadgets, and performance delta" width="100%">
 
 Live gameplay with the radar, gap indicators, and lap performance delta enabled.
 
@@ -36,7 +36,8 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
 1. Start LFS and drive your own car in cockpit or custom view. Confirm that the
    MCI and OutSim age indicators are updating.
 2. Enable **Show overlays** in **Settings**, then enable the cards you want
-   in **Gadgets**.
+   in **Gadgets**. On Windows, press **Insert** to toggle all overlays while driving.
+   Change `overlay_toggle_key` in your TOML file to use another key.
 3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
    turn Position mode off to restore the transparent, click-through overlay.
 4. Adjust size or scale and click **Save settings** to keep your placement.

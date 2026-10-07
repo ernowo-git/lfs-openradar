@@ -78,13 +78,15 @@ pub fn run(
             }
             cc.egui_ctx.set_theme(egui::Theme::Dark);
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(App::new(
+            let mut app = App::new(
                 config,
                 config_path,
                 demo,
                 seconds,
                 screenshot,
-            )))
+            );
+            app.start_hotkey(&cc.egui_ctx);
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| e.to_string())
@@ -104,6 +106,8 @@ struct App {
     setup_plan: Option<crate::setup::SetupPlan>,
     folder_picker: Option<super::folder_picker::FolderPicker>,
     overlay_enabled: bool,
+    hotkey: Option<super::hotkey::OverlayHotkey>,
+    hotkey_error: Option<String>,
     edit_overlay: bool,
     overlay_created: bool,
     overlay_window: OverlayWindow,
@@ -218,6 +222,8 @@ impl App {
             setup_plan: None,
             folder_picker: None,
             overlay_enabled: demo,
+            hotkey: None,
+            hotkey_error: None,
             edit_overlay: false,
             tab: ControlTab::Gadgets,
             opening_layout_passes: 0,
@@ -226,6 +232,61 @@ impl App {
             app.connect();
         }
         app
+    }
+    fn start_hotkey(&mut self, ctx: &egui::Context) {
+        #[cfg(windows)]
+        match self.config.overlay_toggle_key() {
+            Ok(Some(key)) => {
+                match super::hotkey::OverlayHotkey::start(key.virtual_key, ctx.clone()) {
+                    Ok(hotkey) => self.hotkey = Some(hotkey),
+                    Err(error) => {
+                        log::error!(target: "openradar_graphics", "{error}");
+                        self.hotkey_error = Some(error);
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => self.hotkey_error = Some(error),
+        }
+        #[cfg(not(windows))]
+        let _ = ctx;
+    }
+    fn toggle_overlays(&mut self) {
+        self.overlay_enabled = !self.overlay_enabled;
+        log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
+    }
+    fn process_hotkey(&mut self, ctx: &egui::Context) {
+        let configured_key = self
+            .config
+            .overlay_toggle_key()
+            .ok()
+            .flatten()
+            .and_then(|key| egui::Key::from_name(&key.name));
+        let pressed = self
+            .hotkey
+            .as_ref()
+            .is_some_and(|hotkey| hotkey.take_toggle());
+        // Other desktop backends can use the shortcut while the panel has focus.
+        #[cfg(not(windows))]
+        let pressed = pressed
+            || configured_key.is_some_and(|key| {
+                ctx.input(|input| {
+                    input.events.iter().any(|event| {
+                        matches!(event,
+                egui::Event::Key { key: pressed_key, pressed: true, repeat: false, modifiers, .. }
+                    if *pressed_key == key && modifiers.is_none())
+                    })
+                })
+            });
+        if let Some(key) = configured_key {
+            // A configured Space/Enter shortcut must not also activate the
+            // focused checkbox. Only panel input is consumed; LFS keeps its key.
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
+        }
+        if pressed {
+            self.toggle_overlays();
+            ctx.request_repaint();
+        }
     }
     fn connect(&mut self) {
         // Drop joins the old worker and releases its UDP port before restarting.
@@ -639,6 +700,17 @@ impl App {
         {
             log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
         }
+        if let Ok(Some(key)) = self.config.overlay_toggle_key() {
+            let scope = if cfg!(windows) {
+                "also while driving"
+            } else {
+                "while this window has focus"
+            };
+            ui.label(format!("Toggle with {} ({scope}).", key.name));
+        }
+        if let Some(error) = &self.hotkey_error {
+            ui.colored_label(Color32::YELLOW, error);
+        }
         ui.checkbox(
             &mut self.config.hide_when_background,
             "Hide overlay when LFS is in background",
@@ -878,7 +950,7 @@ impl ProjectLink {
     fn url(self) -> &'static str {
         match self {
             Self::GitHub => "https://github.com/ernowo-git/lfs-openradar",
-            Self::KoFi => "https://ko-fi.com/",
+            Self::KoFi => "https://ko-fi.com/ernowo",
         }
     }
 }
@@ -1115,6 +1187,7 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.process_hotkey(ctx);
         self.receive_overlay_feedback();
         let now = self.started.elapsed().as_millis() as u64;
         let snapshot = if let Some(demo) = &mut self.demo {
@@ -1545,6 +1618,42 @@ fn draw_car(
 mod tests {
     use super::*;
     use crate::radar::RadarCar;
+
+    #[test]
+    fn hotkey_toggles_shared_visibility_without_changing_enabled_gadgets() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut config = Config::default();
+        config.gap_ahead.enabled = true;
+        config.gap_behind.enabled = true;
+        config.performance_delta.enabled = true;
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        let saved = toml::to_string(&app.config).unwrap();
+        let queued = Arc::new(AtomicUsize::new(0));
+        app.hotkey = Some(super::super::hotkey::OverlayHotkey::queued(queued.clone()));
+        for (presses, visible) in [(0, true), (1, false), (0, false), (1, true)] {
+            queued.store(presses, Ordering::Relaxed);
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                app.process_hotkey(ctx);
+                app.show_gap_overlays(ctx, true);
+            });
+            assert_eq!(app.overlay_enabled, visible);
+            for id in [
+                "gap-ahead-overlay",
+                "gap-behind-overlay",
+                "performance-delta-overlay",
+            ] {
+                assert_eq!(
+                    output.viewport_output[&ViewportId::from_hash_of(id)]
+                        .builder
+                        .visible,
+                    Some(visible)
+                );
+            }
+            assert_eq!(toml::to_string(&app.config).unwrap(), saved);
+        }
+    }
 
     #[test]
     fn cards_wrap_left_to_right_and_reflow_when_resized() {

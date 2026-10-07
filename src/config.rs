@@ -54,6 +54,8 @@ pub struct Config {
     pub overlay_y: f32,
     pub overlay_size: f32,
     pub hide_when_background: bool,
+    /// Key that toggles all overlays; "None" disables the shortcut.
+    pub overlay_toggle_key: String,
     pub radar_enabled: bool,
     pub gap_ahead: GapSettings,
     pub gap_behind: GapSettings,
@@ -93,6 +95,7 @@ impl Default for Config {
             overlay_y: 160.0,
             overlay_size: 320.0,
             hide_when_background: true,
+            overlay_toggle_key: "Insert".into(),
             radar_enabled: true,
             gap_ahead: GapSettings::default(),
             gap_behind: GapSettings::default(),
@@ -102,6 +105,47 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn overlay_toggle_key(&self) -> Result<Option<OverlayToggleKey>, String> {
+        let name = self.overlay_toggle_key.trim().to_ascii_uppercase();
+        let (virtual_key, canonical) = match name.as_str() {
+            "" | "NONE" => return Ok(None),
+            "INSERT" => (0x2d, "Insert"),
+            "DELETE" => (0x2e, "Delete"),
+            "HOME" => (0x24, "Home"),
+            "END" => (0x23, "End"),
+            "PAGEUP" => (0x21, "PageUp"),
+            "PAGEDOWN" => (0x22, "PageDown"),
+            "SPACE" => (0x20, "Space"),
+            "ENTER" => (0x0d, "Enter"),
+            "ESCAPE" => (0x1b, "Escape"),
+            "TAB" => (0x09, "Tab"),
+            "BACKSPACE" => (0x08, "Backspace"),
+            _ => {
+                let code = if name.len() == 1 && name.as_bytes()[0].is_ascii_alphanumeric() {
+                    Some(name.as_bytes()[0])
+                } else {
+                    name.strip_prefix('F')
+                        .and_then(|n| n.parse::<u8>().ok())
+                        .filter(|n| (1..=24).contains(n))
+                        .map(|n| 0x70 + n - 1)
+                };
+                let virtual_key = code.ok_or_else(||
+                    "overlay_toggle_key must be a supported key name or None; see the usage guide".to_string())?;
+                return Ok(Some(OverlayToggleKey {
+                    virtual_key,
+                    name: if (0x70..=0x87).contains(&virtual_key) {
+                        format!("F{}", virtual_key - 0x70 + 1)
+                    } else {
+                        name
+                    },
+                }));
+            }
+        };
+        Ok(Some(OverlayToggleKey {
+            virtual_key,
+            name: canonical.into(),
+        }))
+    }
     pub fn effective_insim_password(&self) -> String {
         std::env::var("LFS_INSIM_ADMIN").unwrap_or_else(|_| self.insim_password.0.clone())
     }
@@ -150,6 +194,7 @@ impl Config {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.overlay_toggle_key()?;
         crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
         for settings in [&self.gap_ahead, &self.gap_behind, &self.performance_delta] {
             if [settings.window_x, settings.window_y]
@@ -213,4 +258,10 @@ impl Config {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OverlayToggleKey {
+    pub virtual_key: u8,
+    pub name: String,
 }
