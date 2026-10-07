@@ -596,7 +596,10 @@ pub(super) fn paint(
     }
 }
 
-fn side_warning_colors(frame: &RadarFrame, style: &SideWarningStyle) -> [Option<Color32>; 2] {
+fn side_warning_appearance(
+    frame: &RadarFrame,
+    style: &SideWarningStyle,
+) -> [Option<(Color32, f32)>; 2] {
     let mut sides: [Option<(u8, Color32)>; 2] = [None, None];
     if frame.live {
         for car in &frame.cars {
@@ -621,7 +624,16 @@ fn side_warning_colors(frame: &RadarFrame, style: &SideWarningStyle) -> [Option<
             }
         }
     }
-    sides.map(|side| side.map(|(_, color)| color))
+    sides.map(|side| {
+        side.map(|(priority, color)| {
+            let inner_radius = if priority == 3 {
+                style.contact_inner_radius
+            } else {
+                style.inner_radius
+            };
+            (color, inner_radius)
+        })
+    })
 }
 
 fn paint_side_warnings(
@@ -636,8 +648,11 @@ fn paint_side_warnings(
     let center = panel_point(panel, proximity.guide_center);
     let radius = panel.width().min(panel.height()) * proximity.guide_radius;
     const SEGMENTS: u32 = 32;
-    for (side, color) in side_warning_colors(frame, style).into_iter().enumerate() {
-        let Some(color) = color else {
+    for (side, appearance) in side_warning_appearance(frame, style)
+        .into_iter()
+        .enumerate()
+    {
+        let Some((color, inner_radius)) = appearance else {
             continue;
         };
         let angle = if side == 0 { std::f32::consts::PI } else { 0.0 };
@@ -648,7 +663,7 @@ fn paint_side_warnings(
             let theta =
                 angle - style.half_angle + 2.0 * style.half_angle * step as f32 / SEGMENTS as f32;
             let direction = Vec2::new(theta.cos(), theta.sin());
-            let inside = center + direction * radius * style.inner_radius;
+            let inside = center + direction * radius * inner_radius;
             let outside = center + direction * radius;
             mesh.colored_vertex(inside, color.gamma_multiply(style.fill_opacity));
             mesh.colored_vertex(outside, color.gamma_multiply(style.fill_opacity));
@@ -1133,11 +1148,11 @@ mod tests {
             live: true,
             ..Default::default()
         };
-        assert_eq!(side_warning_colors(&frame, style), [None, None]);
+        assert_eq!(side_warning_appearance(&frame, style), [None, None]);
         frame.cars = vec![car(-2.0, Threat::Nearby, false)];
         assert_eq!(
-            side_warning_colors(&frame, style),
-            [Some(style.nearby), None]
+            side_warning_appearance(&frame, style),
+            [Some((style.nearby, style.inner_radius)), None]
         );
         frame.cars.extend([
             car(-1.0, Threat::PotentialContact, false),
@@ -1147,18 +1162,80 @@ mod tests {
             car(2.0, Threat::PotentialContact, true),
         ]);
         assert_eq!(
-            side_warning_colors(&frame, style),
-            [Some(style.contact), Some(style.alongside)]
+            side_warning_appearance(&frame, style),
+            [
+                Some((style.contact, style.contact_inner_radius)),
+                Some((style.alongside, style.inner_radius))
+            ]
         );
         frame.cars = vec![car(2.0, Threat::PotentialContact, true)];
         assert_eq!(
-            side_warning_colors(&frame, style),
-            [None, Some(style.uncertain)]
+            side_warning_appearance(&frame, style),
+            [None, Some((style.uncertain, style.inner_radius))]
         );
         frame.live = false;
-        assert_eq!(side_warning_colors(&frame, style), [None, None]);
+        assert_eq!(side_warning_appearance(&frame, style), [None, None]);
         for opponent in [radar.nearby, radar.alongside, radar.potential_contact] {
             assert_eq!(opponent.border_color, radar.nearby.border_color);
+        }
+    }
+
+    #[test]
+    fn contact_side_warning_expands_inward_on_either_side() {
+        let proximity = theme::resolve(HudStyle::Gt7Inspired)
+            .radar
+            .proximity
+            .as_ref()
+            .unwrap();
+        let style = proximity.side_warnings.as_ref().unwrap();
+        assert!(style.contact_inner_radius < style.inner_radius);
+        let ctx = egui::Context::default();
+        for size in [220.0, 640.0] {
+            let panel = Rect::from_min_size(Pos2::ZERO, Vec2::splat(size));
+            let center = panel_point(panel, proximity.guide_center);
+            let radius = size * proximity.guide_radius;
+            for right in [-2.0, 2.0] {
+                for (threat, uncertain, inner_radius) in [
+                    (Threat::Nearby, false, style.inner_radius),
+                    (Threat::Alongside, false, style.inner_radius),
+                    (Threat::PotentialContact, false, style.contact_inner_radius),
+                    (Threat::PotentialContact, true, style.inner_radius),
+                ] {
+                    let frame = RadarFrame {
+                        live: true,
+                        cars: vec![crate::radar::RadarCar {
+                            plid: 1,
+                            name: "Opponent".into(),
+                            right,
+                            forward: 0.0,
+                            relative_heading: 0.0,
+                            threat,
+                            uncertain,
+                        }],
+                        ..Default::default()
+                    };
+                    let output = ctx.run(egui::RawInput::default(), |ctx| {
+                        paint_side_warnings(
+                            &ctx.layer_painter(egui::LayerId::background()),
+                            panel,
+                            proximity,
+                            &frame,
+                            style,
+                            size / 320.0,
+                        );
+                    });
+                    let Shape::Mesh(mesh) = &output.shapes[0].shape else {
+                        panic!("expected warning mesh");
+                    };
+                    for pair in mesh.vertices.as_chunks::<2>().0 {
+                        assert!(
+                            ((pair[0].pos - center).length() - radius * inner_radius).abs() < 0.001
+                        );
+                        assert!(((pair[1].pos - center).length() - radius).abs() < 0.001);
+                        assert_eq!((pair[0].pos.x - center.x).signum(), (right as f32).signum());
+                    }
+                }
+            }
         }
     }
 

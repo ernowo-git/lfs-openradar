@@ -109,6 +109,7 @@ pub(super) const RADAR: RadarStyle = RadarStyle {
         }),
         side_warnings: Some(SideWarningStyle {
             inner_radius: 0.68,
+            contact_inner_radius: 0.375,
             half_angle: 0.55,
             fill_opacity: 0.25,
             border_width: 2.0,

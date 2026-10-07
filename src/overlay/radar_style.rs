@@ -20,6 +20,8 @@ pub(super) struct RadialBackgroundStyle {
 pub(super) struct SideWarningStyle {
     /// Fraction of the outer circle radius where the warning sector starts.
     pub inner_radius: f32,
+    /// Contact warnings extend inward to this fraction of the outer radius.
+    pub contact_inner_radius: f32,
     pub half_angle: f32,
     pub fill_opacity: f32,
     pub border_width: f32,
