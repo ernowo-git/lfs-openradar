@@ -1008,11 +1008,6 @@ fn delta_value(value: &crate::delta::DeltaFrame) -> GapValue {
             value
                 .best_seconds
                 .map(|s| format!("Session best {}", lap_time_text(s)))
-                .or_else(|| {
-                    value
-                        .sector_reference_seconds
-                        .map(|_| "Reference after sector 1".into())
-                })
                 .unwrap_or_else(|| "No reference lap yet".into()),
         ),
         status: format!("{} {}", delta_trend(value), value.status),
@@ -1075,15 +1070,7 @@ fn paint_delta(
         rect.min + Vec2::new(8.0, 78.0) * scale,
         Align2::LEFT_TOP,
         if value.seconds.is_some() {
-            format!(
-                "{} · {}",
-                delta_trend(value),
-                if value.since_sector1 {
-                    "SINCE SECTOR 1"
-                } else {
-                    "ESTIMATE"
-                }
-            )
+            format!("{} · ESTIMATE", delta_trend(value))
         } else {
             clipped_text(&value.status, 35)
         },
@@ -2150,69 +2137,61 @@ mod tests {
     }
 
     #[test]
-    fn delta_estimate_and_partial_reference_labels_fit_the_overlay() {
+    fn delta_estimate_and_reference_labels_fit_the_overlay() {
         assert_eq!(lap_time_text(59.999), "1:00.00");
         for scale in [0.6, 1.0, 2.5] {
-            for partial in [false, true] {
-                let ctx = egui::Context::default();
-                let value = crate::delta::DeltaFrame {
-                    seconds: Some(-0.15),
-                    trend: Some(-0.1),
-                    best_seconds: (!partial).then_some(83.6),
-                    sector_reference_seconds: partial.then_some(60.0),
-                    since_sector1: partial,
-                    estimated_lap_seconds: Some(83.45),
-                    status: "Delta since sector 1".into(),
-                };
-                let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 100.0) * scale);
-                let output = ctx.run(
-                    egui::RawInput {
-                        screen_rect: Some(rect),
-                        ..Default::default()
-                    },
-                    |ctx| {
-                        paint_delta(
-                            &ctx.layer_painter(egui::LayerId::background()),
-                            rect,
-                            &value,
-                            &GapSettings {
-                                scale,
-                                ..Default::default()
-                            },
-                        );
-                    },
-                );
-                let texts: Vec<_> = output
-                    .shapes
-                    .iter()
-                    .filter_map(|s| match &s.shape {
-                        Shape::Text(text) => Some(text),
-                        _ => None,
-                    })
-                    .collect();
-                assert!(
-                    texts
-                        .iter()
-                        .any(|t| t.galley.job.text == "Estimated lap 1:23.45")
-                );
-                assert!(texts.iter().any(|t| t.galley.job.text.contains(if partial {
-                    "SINCE SECTOR 1"
-                } else {
-                    "ESTIMATE"
-                })));
-                for text in texts {
-                    assert!(
-                        rect.expand(scale)
-                            .contains_rect(text.visual_bounding_rect()),
-                        "{}",
-                        text.galley.job.text
+            let ctx = egui::Context::default();
+            let value = crate::delta::DeltaFrame {
+                seconds: Some(-0.15),
+                trend: Some(-0.1),
+                best_seconds: Some(83.6),
+                estimated_lap_seconds: Some(83.45),
+                status: "Estimated vs session best".into(),
+            };
+            let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 100.0) * scale);
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(rect),
+                    ..Default::default()
+                },
+                |ctx| {
+                    paint_delta(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        rect,
+                        &value,
+                        &GapSettings {
+                            scale,
+                            ..Default::default()
+                        },
                     );
-                }
-                assert_eq!(
-                    estimated_lap_text(&crate::delta::DeltaFrame::default()),
-                    "Estimated lap —"
+                },
+            );
+            let texts: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    Shape::Text(text) => Some(text),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t.galley.job.text == "Estimated lap 1:23.45")
+            );
+            assert!(texts.iter().any(|t| t.galley.job.text.contains("ESTIMATE")));
+            for text in texts {
+                assert!(
+                    rect.expand(scale)
+                        .contains_rect(text.visual_bounding_rect()),
+                    "{}",
+                    text.galley.job.text
                 );
             }
+            assert_eq!(
+                estimated_lap_text(&crate::delta::DeltaFrame::default()),
+                "Estimated lap —"
+            );
         }
     }
 

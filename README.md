@@ -11,12 +11,9 @@ primary platform; Linux/X11 support is experimental.
 
 ## Quick preview
 
-![OpenRadar demo showing the control panel, radar, gap gadgets, and performance delta](assets/preview.png)
+![OpenRadar in Live for Speed showing the radar, gap gadgets, and performance delta](assets/preview.gif)
 
-Synthetic demo with all gadgets enabled. The demo delta needs a fully recorded lap
-before it can show a comparison.
-
-<!-- Replace the preview image with an animated GIF when available. -->
+Live gameplay with the radar, gap indicators, and lap performance delta enabled.
 
 ## Features
 
@@ -46,13 +43,12 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
    Use **Apply / reconnect** after changing connection or telemetry settings.
 
 The gaps compare adjacent **race-order** drivers on standard circuit layouts.
-In races with sector timing, the performance delta can start at sector 1 on
-lap 2, using a clean recorded trace from lap 1's sector-1 checkpoint to the
-finish. **SINCE SECTOR 1** means the delta excludes the first sector. Once a
-complete reference lap is recorded, comparison covers the full lap.
+The performance delta records a full reference lap from the finish line.
+In a race, recording starts at the beginning of lap 2; after a clean lap 2 is
+confirmed by LFS, comparison starts on lap 3.
 Negative/green means ahead; positive/red means behind. **GAINING / LOSING** shows
-the recent change. **Estimated lap** projects the current lap's finish time;
-in sector-1 mode it includes the current lap's actual first-sector time.
+the recent change. **Estimated lap** projects the current lap's finish time
+using the session-best reference and live delta.
 Gaps, delta, and projected lap times are estimates; stale or unsuitable telemetry
 shows unavailable.
 

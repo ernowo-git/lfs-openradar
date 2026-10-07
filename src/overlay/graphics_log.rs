@@ -11,7 +11,7 @@ const MAX_BYTES: u64 = 1024 * 1024;
 struct GraphicsLog(Mutex<(File, u64)>);
 impl log::Log for GraphicsLog {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.target() == "openradar_graphics"
+        matches!(metadata.target(), "openradar_graphics" | "openradar_timing")
             || (metadata.level() <= log::Level::Warn
                 && ["wgpu", "eframe", "egui_wgpu", "egui_winit", "winit"]
                     .iter()
@@ -50,7 +50,8 @@ impl log::Log for GraphicsLog {
 }
 
 /// Append across launches so a failed session is retained. Reset only when the
-/// bounded file is already full. Telemetry and password targets are excluded.
+/// bounded file is already full. Timing transitions are included; raw telemetry
+/// and passwords are excluded.
 pub(super) fn init(config_path: &Path) {
     let path = config_path.with_file_name("openradar.graphics.log");
     let full = path

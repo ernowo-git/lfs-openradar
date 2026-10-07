@@ -57,6 +57,8 @@ pub enum Packet {
     Tiny(u8),
     State(State),
     Player(Player),
+    /// Reply to a roster request, rather than a car joining or re-entering.
+    PlayerSnapshot(Player),
     ConnectionLeft(u8),
     Pit(u8),
     Leave(u8),
@@ -181,14 +183,19 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
             if p[73] == 0 {
                 return Ok(Packet::Other);
             } // Join request, not a racer.
-            Packet::Player(Player {
+            let player = Player {
                 plid: p[3],
                 ucid: p[4],
                 kind: p[5],
                 name: plain_driver_name(&text(&p[8..32])),
                 model: text(&p[40..44]),
                 in_garage: false,
-            })
+            };
+            if p[2] != 0 {
+                Packet::PlayerSnapshot(player)
+            } else {
+                Packet::Player(player)
+            }
         }
         22 => {
             exact(4)?;

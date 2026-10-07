@@ -49,209 +49,72 @@ fn race_setup() -> DeltaEngine {
     });
     engine
 }
-fn opening_lap(
-    engine: &mut DeltaEngine,
-    reports_first: bool,
-    invalid_at: Option<u64>,
-    split: Option<(u32, u8)>,
-    lap: Option<(u32, u8)>,
-) {
-    // Connected after the start: no initial finish crossing was observed.
-    for progress in 5..=40 {
-        let time = (progress - 5) * 100;
-        if invalid_at == Some(progress) {
-            engine.invalidate();
-        }
-        if reports_first
-            && progress == 10
-            && let Some((ms, penalty)) = split
-        {
-            engine.split_report(ms, penalty, time);
-        }
-        if reports_first
-            && progress == 40
-            && let Some((ms, penalty)) = lap
-        {
-            engine.lap_report(ms, penalty, time);
-        }
-        engine.update(&car(progress as f64), time);
-        if !reports_first
-            && progress == 10
-            && let Some((ms, penalty)) = split
-        {
-            engine.split_report(ms, penalty, time);
-        }
-        if !reports_first
-            && progress == 40
-            && let Some((ms, penalty)) = lap
-        {
-            engine.lap_report(ms, penalty, time);
-        }
-    }
-}
-
 #[test]
-fn sector_one_reference_starts_lap_two_delta_and_projects_the_whole_lap() {
+fn race_records_lap_two_from_the_finish_and_compares_from_lap_three() {
     for reports_first in [true, false] {
-        for node_ms in [90_u64, 110] {
-            let mut engine = race_setup();
-            // Opening lap contains two seconds before S1 and three after it.
-            opening_lap(
-                &mut engine,
-                reports_first,
-                None,
-                Some((2000, 0)),
-                Some((5000, 0)),
-            );
-            let reference = engine.frame(3500, 250);
-            assert_eq!(reference.sector_reference_seconds, Some(3.0));
-            assert_eq!(reference.best_seconds, None);
-            for progress in 41..=50 {
-                let time = 3500 + (progress - 40) * 80;
-                if reports_first && progress == 50 {
-                    engine.split_report(800, 0, time);
-                }
-                engine.update(&car(progress as f64), time);
-                if progress < 50 {
-                    let waiting = engine.frame(time, 250);
-                    assert!(waiting.seconds.is_none());
-                    assert!(waiting.estimated_lap_seconds.is_none());
-                }
-                if reports_first && progress == 50 {
-                    let start = engine.frame(time, 250);
-                    assert!(start.seconds.unwrap().abs() < 1e-8);
-                    assert!((start.estimated_lap_seconds.unwrap() - 3.8).abs() < 1e-8);
-                }
-                if !reports_first && progress == 50 {
-                    engine.split_report(800, 0, time);
-                }
+        let mut engine = race_setup();
+        // Join during lap 1: sector 1 cannot create a partial reference.
+        for progress in 5..=81 {
+            let time = (progress - 5) * 100;
+            let report = match progress {
+                40 => Some(5000), // Opening lap has a different timing origin.
+                80 => Some(4000),
+                _ => None,
+            };
+            if reports_first && let Some(ms) = report {
+                engine.lap_report(ms, 0, time);
             }
-            let now = 4300 + node_ms;
-            engine.update(&car(51.0), now);
-            let delta = engine.frame(now, 250);
-            let expected = (node_ms as f64 - 100.0) / 1000.0;
-            assert!(delta.since_sector1);
-            assert_eq!(delta.status, "Delta since sector 1");
-            assert!((delta.seconds.unwrap() - expected).abs() < 1e-8);
-            // Includes lap TWO's faster first sector, not the opening lap's.
-            assert!((delta.estimated_lap_seconds.unwrap() - (3.8 + expected)).abs() < 1e-8);
-            let stale = engine.frame(now + 251, 250);
-            assert!(stale.estimated_lap_seconds.is_none());
-            assert_eq!(stale.sector_reference_seconds, Some(3.0));
-            for progress in 52..=80 {
-                engine.update(&car(progress as f64), now + (progress - 51) * 100);
+            engine.update(&car(progress as f64), time);
+            if progress < 40 {
+                assert_eq!(
+                    engine.frame(time, 250).status,
+                    "Cross the finish line to start recording"
+                );
             }
-            let finish = now + 2900;
-            engine.lap_report((finish - 3500) as u32, 0, finish);
-            engine.update(&car(81.0), finish + 100);
-            let full = engine.frame(finish + 100, 250);
-            assert!(!full.since_sector1);
-            assert!(full.sector_reference_seconds.is_none());
-            assert!((full.best_seconds.unwrap() - (3.8 + expected)).abs() < 1e-8);
-            // Lap 3 takes 100 ms to node 1; the full reference took 80 ms.
-            assert!((full.seconds.unwrap() - 0.02).abs() < 1e-8);
-            assert!(
-                (full.estimated_lap_seconds.unwrap() - full.best_seconds.unwrap() - 0.02).abs()
-                    < 1e-8
-            );
+            if !reports_first && let Some(ms) = report {
+                engine.lap_report(ms, 0, time);
+            }
+            let frame = engine.frame(time, 250);
+            if progress < 80 {
+                assert!(frame.best_seconds.is_none());
+                assert!(frame.seconds.is_none());
+                assert!(frame.estimated_lap_seconds.is_none());
+            }
+            if progress == 40 || progress == 50 {
+                assert_eq!(
+                    frame.status,
+                    "Complete a valid recorded lap to set a reference"
+                );
+            }
         }
+        let frame = engine.frame(7600, 250);
+        assert_eq!(frame.best_seconds, Some(4.0));
+        assert!(frame.seconds.unwrap().abs() < 1e-8);
+        assert!((frame.estimated_lap_seconds.unwrap() - 4.0).abs() < 1e-8);
+        assert_eq!(frame.status, "Estimated vs session best");
+        let stale = engine.frame(7851, 250);
+        assert!(stale.seconds.is_none());
+        assert!(stale.estimated_lap_seconds.is_none());
+        assert_eq!(stale.best_seconds, Some(4.0));
     }
 }
 
 #[test]
-fn partial_reference_requires_clean_continuous_progress_and_official_timing() {
-    for invalid_at in [None, Some(7), Some(20)] {
-        for (split, lap) in [
-            (Some((2000, 0)), Some((5000, 0))),
-            (None, Some((5000, 0))),
-            (Some((2000, 1)), Some((5000, 0))),
-            (Some((2000, 0)), Some((5000, 1))),
-            (Some((6000, 0)), Some((5000, 0))),
-            (Some((2000, 0)), Some((8000, 0))),
-            (Some((2000, 0)), None),
-        ] {
-            let mut engine = race_setup();
-            opening_lap(&mut engine, false, invalid_at, split, lap);
-            assert_eq!(
-                engine.frame(3500, 250).sector_reference_seconds.is_some(),
-                invalid_at.is_none() && split == Some((2000, 0)) && lap == Some((5000, 0))
-            );
-        }
-    }
-    let mut engine = race_setup();
-    for progress in 5..=40 {
-        let time = (progress - 5) * 100;
-        engine.update(&car(progress as f64), time);
-        if progress == 10 {
-            engine.split_report(2000, 0, time);
-        }
-        if progress == 20 {
-            engine.reset_lap();
-        }
-    }
-    engine.lap_report(5000, 0, 3500);
-    assert!(engine.frame(3500, 250).sector_reference_seconds.is_none());
-}
-
-#[test]
-fn partial_reference_survives_interruption_but_session_reset_clears_it() {
-    let mut engine = race_setup();
-    opening_lap(&mut engine, false, None, Some((2000, 0)), Some((5000, 0)));
-    engine.reset_lap();
-    let reset = engine.frame(3500, 250);
-    assert_eq!(reset.sector_reference_seconds, Some(3.0));
-    assert!(reset.seconds.is_none());
-    assert!(reset.estimated_lap_seconds.is_none());
-    engine.reset_reference();
-    assert!(engine.frame(3500, 250).sector_reference_seconds.is_none());
-}
-
-#[test]
-fn opening_lap_with_a_different_start_origin_can_still_supply_post_split_reference() {
+fn opening_lap_with_a_different_start_origin_cannot_supply_a_reference() {
     let mut engine = race_setup();
     for progress in 39..=80 {
-        let time = (progress - 39) * 100;
-        engine.update(&car(progress as f64), time);
-        if progress == 50 {
-            engine.split_report(3000, 0, time);
-        }
+        engine.update(&car(progress as f64), (progress - 39) * 100);
     }
-    // The recorded finish-to-finish span was 4s, but LFS's opening lap was 6s.
-    // Both agree that the portion after S1 lasted 3s.
+    // A finish-to-finish trace does not qualify if official timing disagrees.
     engine.lap_report(6000, 0, 4100);
-    let delta = engine.frame(4100, 250);
-    assert_eq!(delta.best_seconds, None);
-    assert_eq!(delta.sector_reference_seconds, Some(3.0));
+    assert!(engine.frame(4100, 250).best_seconds.is_none());
+    for progress in 81..=120 {
+        engine.update(&car(progress as f64), (progress - 39) * 100);
+    }
+    engine.lap_report(4000, 0, 8100);
+    assert_eq!(engine.frame(8100, 250).best_seconds, Some(4.0));
 }
 
-#[test]
-fn absent_invalid_or_non_race_split_metadata_keeps_finish_line_recording() {
-    for info in [
-        track(),
-        TrackInfo {
-            timing: 0x41,
-            race_laps: 5,
-            split1: 99,
-            ..track()
-        },
-        TrackInfo {
-            timing: 0x41,
-            race_laps: 5,
-            split1: 7,
-            ..track()
-        },
-        TrackInfo {
-            timing: 0x41,
-            split1: 17,
-            ..track()
-        },
-    ] {
-        let mut engine = setup();
-        engine.set_track(info);
-        opening_lap(&mut engine, false, None, Some((2000, 0)), Some((5000, 0)));
-        assert!(engine.frame(3500, 250).sector_reference_seconds.is_none());
-    }
-}
 fn record(
     e: &mut DeltaEngine,
     start: u64,
@@ -283,6 +146,316 @@ fn confirms_complete_reference_with_lap_packet_before_or_after_mci() {
         e.update(&car(81.0), end + 100);
         assert_eq!(e.frame(end + 100, 250).best_seconds, Some(4.0));
         assert!(e.frame(end + 100, 250).seconds.unwrap().abs() < 1e-8);
+    }
+}
+
+#[test]
+fn coalesced_mci_updates_keep_recording_and_live_comparison() {
+    for report_first in [true, false] {
+        let mut engine = race_setup();
+        // The runtime timestamps every packet in a TCP read together. Include
+        // advancing and stationary updates in each batch, also at the finish.
+        for progress in 39..=81 {
+            let time = ((progress - 39) / 2) * 200;
+            if progress == 80 && report_first {
+                engine.lap_report(4000, 0, time);
+            }
+            let sample = car(progress as f64);
+            engine.update(&sample, time);
+            engine.update(&sample, time);
+            if progress == 80 && !report_first {
+                engine.lap_report(4000, 0, time);
+            }
+        }
+        let frame = engine.frame(4200, 250);
+        assert_eq!(frame.best_seconds, Some(4.0));
+        assert_eq!(frame.status, "Estimated vs session best");
+        assert!(frame.seconds.is_some());
+        assert!(frame.estimated_lap_seconds.is_some());
+        // Actual clock reversal must still discard the current recording.
+        engine.update(&car(82.0), 4199);
+        let backwards = engine.frame(4200, 250);
+        assert!(backwards.seconds.is_none());
+        assert_eq!(backwards.best_seconds, Some(4.0));
+    }
+}
+
+#[test]
+fn short_telemetry_interruptions_preserve_the_trace_but_long_gaps_discard_it() {
+    for interrupted_nodes in [1, 6] {
+        let mut engine = race_setup();
+        for progress in 39..=80 {
+            let time = (progress - 39) * 100;
+            let mut sample = car(progress as f64);
+            if (60..60 + interrupted_nodes).contains(&progress) {
+                sample.info |= 32;
+                engine.update(&sample, time);
+                let suspended = engine.frame(time, 250);
+                assert!(suspended.seconds.is_none());
+                assert!(suspended.estimated_lap_seconds.is_none());
+                continue;
+            }
+            engine.update(&sample, time);
+        }
+        engine.lap_report(4000, 0, 4100);
+        assert_eq!(
+            engine.frame(4100, 250).best_seconds,
+            (interrupted_nodes == 1).then_some(4.0)
+        );
+    }
+}
+
+fn timing_pipeline() -> lfs_openradar::radar::Engine {
+    use lfs_openradar::lfs::insim::{Player, State};
+    let mut engine = lfs_openradar::radar::Engine::default();
+    for id in 1..=4 {
+        engine
+            .packet(
+                Packet::Player(Player {
+                    plid: id,
+                    ucid: id,
+                    kind: if id == 1 { 0 } else { 6 },
+                    name: format!("Driver {id}"),
+                    model: "XRG".into(),
+                    in_garage: false,
+                }),
+                0,
+            )
+            .unwrap();
+    }
+    engine
+        .packet(
+            Packet::State(State {
+                flags: 1,
+                camera: 3,
+                viewed: 1,
+                track: "BL1".into(),
+            }),
+            0,
+        )
+        .unwrap();
+    engine
+        .packet(
+            Packet::RaceStart {
+                info: TrackInfo {
+                    race_laps: 5,
+                    ..track()
+                },
+                requested: false,
+            },
+            0,
+        )
+        .unwrap();
+    engine
+}
+
+fn timing_cars(progress: u64) -> Vec<Car> {
+    [
+        (1, 2, progress, 64),
+        (2, 1, progress + 2, 0),
+        (3, 3, progress - 3, 128),
+    ]
+    .into_iter()
+    .map(|(id, position, progress, info)| {
+        let mut sample = car(progress as f64);
+        sample.plid = id;
+        sample.position = position;
+        sample.info = info;
+        sample
+    })
+    .collect()
+}
+
+#[test]
+fn opponent_events_and_roster_replies_preserve_local_delta_and_neighbor_gaps() {
+    use lfs_openradar::lfs::{insim::Player, outsim::Sample};
+    let config = Config {
+        interpolation_ms: 0,
+        ..Default::default()
+    };
+    for event in [
+        Packet::Pit(4),
+        Packet::Reset(4),
+        Packet::Leave(4),
+        Packet::ConnectionLeft(4),
+        Packet::Camera(4),
+        Packet::Takeover(4),
+        Packet::PlayerSnapshot(Player {
+            plid: 1,
+            ucid: 1,
+            kind: 0,
+            name: "Driver 1".into(),
+            model: "XRG".into(),
+            in_garage: false,
+        }),
+    ] {
+        let mut engine = timing_pipeline();
+        for progress in 38..=90 {
+            let time = (progress - 38) * 100;
+            if progress == 60 || progress == 84 {
+                engine.packet(event.clone(), time).unwrap();
+            }
+            let cars = timing_cars(progress);
+            let pose = cars[0].pose;
+            engine.packet(Packet::Mci(cars), time).unwrap();
+            engine.outsim(
+                Sample {
+                    time_ms: time as u32,
+                    pose,
+                },
+                time,
+                &config,
+            );
+            if progress == 80 {
+                engine
+                    .packet(
+                        Packet::Lap {
+                            plid: 1,
+                            time_ms: 4000,
+                            penalty: 0,
+                        },
+                        time,
+                    )
+                    .unwrap();
+            }
+            if progress == 61 || progress == 85 {
+                let radar = engine.frame(time, &config);
+                assert!(radar.live, "{event:?}: {}", radar.status);
+                let gaps = engine.gaps(time, &config, &radar);
+                assert!(
+                    gaps.ahead.seconds.is_some(),
+                    "{event:?}: {}",
+                    gaps.ahead.status
+                );
+                assert!(
+                    gaps.behind.seconds.is_some(),
+                    "{event:?}: {}",
+                    gaps.behind.status
+                );
+            }
+        }
+        let radar = engine.frame(5200, &config);
+        let delta = engine.delta(5200, &config, &radar);
+        assert_eq!(delta.best_seconds, Some(4.0), "{event:?}");
+        assert!(delta.seconds.unwrap().abs() < 1e-8, "{event:?}");
+    }
+}
+
+#[test]
+fn transient_pose_mismatch_or_missing_local_mci_recovers_without_restarting_the_lap() {
+    use lfs_openradar::lfs::outsim::Sample;
+    let config = Config {
+        interpolation_ms: 0,
+        ..Default::default()
+    };
+    for missing_car in [false, true] {
+        let mut engine = timing_pipeline();
+        for progress in 38..=90 {
+            let time = (progress - 38) * 100;
+            let mut cars = timing_cars(progress);
+            let mut pose = cars[0].pose;
+            if progress == 60 || progress == 84 {
+                if missing_car {
+                    cars.remove(0);
+                    cars[0].info |= 64;
+                } else {
+                    pose.x += 1000.0;
+                }
+            }
+            engine.packet(Packet::Mci(cars), time).unwrap();
+            engine.outsim(
+                Sample {
+                    time_ms: time as u32,
+                    pose,
+                },
+                time,
+                &config,
+            );
+            if progress == 60 || progress == 84 {
+                let radar = engine.frame(time, &config);
+                let delta = engine.delta(time, &config, &radar);
+                assert!(delta.seconds.is_none());
+                assert!(delta.estimated_lap_seconds.is_none());
+            }
+            if progress == 80 {
+                engine
+                    .packet(
+                        Packet::Lap {
+                            plid: 1,
+                            time_ms: 4000,
+                            penalty: 0,
+                        },
+                        time,
+                    )
+                    .unwrap();
+            }
+        }
+        let radar = engine.frame(5200, &config);
+        let delta = engine.delta(5200, &config, &radar);
+        assert_eq!(delta.best_seconds, Some(4.0));
+        assert!(delta.seconds.unwrap().abs() < 1e-8);
+        let gaps = engine.gaps(5200, &config, &radar);
+        assert!(gaps.ahead.seconds.is_some());
+        assert!(gaps.behind.seconds.is_some());
+    }
+}
+
+#[test]
+fn local_resets_and_teleports_discard_recording_but_opponent_teleports_do_not() {
+    use lfs_openradar::lfs::outsim::Sample;
+    let config = Config {
+        interpolation_ms: 0,
+        ..Default::default()
+    };
+    for mode in 0..3 {
+        let mut engine = timing_pipeline();
+        for progress in 38..=81 {
+            let time = (progress - 38) * 100;
+            let mut cars = timing_cars(progress);
+            cars[2].info = 0;
+            let mut other = car((progress - 8) as f64);
+            other.plid = 4;
+            other.position = 4;
+            other.info = 128;
+            cars.push(other);
+            if progress == 60 {
+                match mode {
+                    0 => engine.packet(Packet::Reset(1), time).unwrap(),
+                    1 => cars[0].pose.x += 1000.0,
+                    _ => cars[3].pose.x += 1000.0,
+                }
+            }
+            let pose = cars[0].pose;
+            engine.packet(Packet::Mci(cars), time).unwrap();
+            engine.outsim(
+                Sample {
+                    time_ms: time as u32,
+                    pose,
+                },
+                time,
+                &config,
+            );
+            if progress == 80 {
+                engine
+                    .packet(
+                        Packet::Lap {
+                            plid: 1,
+                            time_ms: 4000,
+                            penalty: 0,
+                        },
+                        time,
+                    )
+                    .unwrap();
+            }
+        }
+        let radar = engine.frame(4300, &config);
+        let delta = engine.delta(4300, &config, &radar);
+        assert_eq!(delta.best_seconds, (mode == 2).then_some(4.0));
+        if mode == 2 {
+            let gaps = engine.gaps(4300, &config, &radar);
+            assert!(gaps.ahead.seconds.is_some());
+            assert!(gaps.behind.seconds.is_some());
+        }
     }
 }
 
@@ -451,7 +624,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
 }
 
 #[test]
-fn race_pipeline_uses_only_the_local_first_split_and_hides_estimate_when_paused() {
+fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
     use lfs_openradar::{
         lfs::{
             insim::{Player, State},
@@ -499,7 +672,7 @@ fn race_pipeline_uses_only_the_local_first_split_and_hides_estimate_when_paused(
             0,
         )
         .unwrap();
-    for progress in 5..=51 {
+    for progress in 5..=81 {
         let time = (progress - 5) * 100;
         let sample = car(progress as f64);
         engine
@@ -526,12 +699,12 @@ fn race_pipeline_uses_only_the_local_first_split_and_hides_estimate_when_paused(
                 )
                 .unwrap();
         }
-        if progress == 40 {
+        if progress == 40 || progress == 80 {
             engine
                 .packet(
                     Packet::Lap {
                         plid: 1,
-                        time_ms: 5000,
+                        time_ms: if progress == 40 { 5000 } else { 4000 },
                         penalty: 0,
                     },
                     time,
@@ -562,12 +735,18 @@ fn race_pipeline_uses_only_the_local_first_split_and_hides_estimate_when_paused(
                 )
                 .unwrap();
         }
+        if progress < 80 {
+            let radar = engine.frame(time, &config);
+            let delta = engine.delta(time, &config, &radar);
+            assert!(delta.best_seconds.is_none());
+            assert!(delta.seconds.is_none());
+            assert!(delta.estimated_lap_seconds.is_none());
+        }
     }
-    let radar = engine.frame(4600, &config);
+    let radar = engine.frame(7600, &config);
     assert!(radar.live);
-    let delta = engine.delta(4600, &config, &radar);
-    assert_eq!(delta.sector_reference_seconds, Some(3.0));
-    assert_eq!(delta.best_seconds, None);
+    let delta = engine.delta(7600, &config, &radar);
+    assert_eq!(delta.best_seconds, Some(4.0));
     assert!(delta.seconds.unwrap().abs() < 1e-8);
     assert!((delta.estimated_lap_seconds.unwrap() - 4.0).abs() < 1e-8);
     engine
@@ -578,22 +757,17 @@ fn race_pipeline_uses_only_the_local_first_split_and_hides_estimate_when_paused(
                 viewed: 1,
                 track: "BL1".into(),
             }),
-            4600,
+            7600,
         )
         .unwrap();
-    let paused = engine.frame(4600, &config);
-    let delta = engine.delta(4600, &config, &paused);
+    let paused = engine.frame(7600, &config);
+    let delta = engine.delta(7600, &config, &paused);
     assert!(delta.seconds.is_none());
     assert!(delta.estimated_lap_seconds.is_none());
-    assert_eq!(delta.sector_reference_seconds, Some(3.0));
-    engine.packet(Packet::Session, 4600).unwrap();
-    let reset = engine.frame(4600, &config);
-    assert!(
-        engine
-            .delta(4600, &config, &reset)
-            .sector_reference_seconds
-            .is_none()
-    );
+    assert_eq!(delta.best_seconds, Some(4.0));
+    engine.packet(Packet::Session, 7600).unwrap();
+    let reset = engine.frame(7600, &config);
+    assert!(engine.delta(7600, &config, &reset).best_seconds.is_none());
 }
 
 #[test]

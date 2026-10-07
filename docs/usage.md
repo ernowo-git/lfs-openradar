@@ -79,17 +79,11 @@ Enable **Performance delta** and **Show overlays** in the control panel. Its own
 **Position mode**, X/Y, and Scale controls work like the gap gadgets. Save settings
 to persist placement. Existing configurations default to this gadget disabled.
 
-In a race with sector timing, OpenRadar can record a clean trace from the
-sector-1 checkpoint to the finish on lap 1. On lap 2, delta starts at zero when
-you cross sector 1 and compares the remainder of the lap with that trace.
-**SINCE SECTOR 1** identifies this partial comparison: gains or losses in the
-first sector are excluded from the delta. A reference requires uninterrupted
-matching telemetry and LFS's split and lap reports; connecting after sector 1
-means waiting for a later valid recording.
-
-After a clean, fully recorded finish-to-finish lap is confirmed, the gadget uses
-your session-best full-lap reference. Tracks without a valid sector-1 checkpoint,
-practice, and qualifying use this full-lap recording path from the beginning.
+After crossing the finish line, complete a clean, fully recorded lap to establish
+your session-best reference. In a race, recording starts at the beginning of
+lap 2 and comparison becomes available on lap 3 after LFS confirms a clean lap 2.
+The first partial lap after connecting or leaving the pits cannot qualify.
+Practice and qualifying also record a full lap from a finish-line crossing.
 The display compares elapsed time at matching track
 progress on every complete MCI update (normally every 20 ms), with spatial
 interpolation between reference nodes. Negative/green means ahead; positive/red
@@ -97,19 +91,25 @@ means behind. **GAINING / LOSING / STEADY** and the small bar show the recent ch
 in delta, independently of whether you are ahead overall.
 
 **Estimated lap** shows the projected current lap time in minutes and seconds.
-With a full reference it is the reference lap time plus the live delta. With a
-partial reference it is the current lap's official first-sector time plus the
-reference time from sector 1 to the finish, plus the live delta since sector 1.
+It is the reference lap time plus the live delta.
 It assumes the remaining track is driven at the reference pace. It shows a dash
 until comparison is available, and while paused, invalid, or telemetry is stale.
 
 The reference stays fixed during a lap and updates after a faster clean lap is
 confirmed by LFS's lap-completion packet. Track-limit/wall/pit-speed violations,
-pit stops, penalties, resets, backwards/discontinuous progress, and missing or
-misassociated telemetry prevent a lap becoming a reference. Pitting or changing
+pit stops, penalties, resets, and backwards/discontinuous progress prevent a lap
+becoming a reference. Pitting or changing
 views retains the best reference for the same driver and car, but restarts
 recording. Track, layout, car, session changes and reconnects clear the reference.
 References are session-only and are not written to disk.
+
+Brief lag, missing car updates, or mismatched OutSim samples hide live values
+while retaining validated lap and gap history in memory. Timing resumes if
+matching telemetry returns within 500 ms with continuous progress. Longer gaps
+discard the current recording but retain an established session reference.
+Other drivers' pit stops, resets, and roster refreshes preserve your timing
+history. Recording starts, interruptions, resets, and accepted references are
+logged in `openradar.graphics.log` beside the configuration file.
 
 Standard circuit timing is supported in practice, qualifying, and races. Open
 and custom timing layouts show unavailable. Values are explicitly estimates:

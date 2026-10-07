@@ -91,6 +91,18 @@ fn driver_names_ignore_color_codes_and_preserve_text() {
         assert_eq!(player.name, expected);
     }
 }
+
+#[test]
+fn requested_player_roster_is_distinct_from_a_car_rejoining() {
+    let mut bytes = packet(21, 76);
+    bytes[3] = 7;
+    bytes[73] = 1;
+    assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Player(_)));
+    bytes[2] = 1;
+    assert!(
+        matches!(insim::decode(&bytes).unwrap(), Packet::PlayerSnapshot(player) if player.plid == 7)
+    );
+}
 #[test]
 fn sets_of_17_and_48_cars_are_atomic() {
     for count in [17, 48] {

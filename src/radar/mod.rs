@@ -107,11 +107,23 @@ impl Engine {
     }
     fn clear_histories(&mut self) {
         self.gaps.clear();
+        self.clear_radar_histories();
+    }
+    fn clear_radar_histories(&mut self) {
         self.assembler.clear();
         self.snapshots.clear();
         self.poses.clear();
         self.outsim_clock = None;
         self.previous_threats.clear();
+    }
+    fn forget_driver_history(&mut self, id: u8, reason: &str) {
+        if self.selected == Some(id) {
+            self.delta.reset_lap_with_reason(reason);
+            self.clear_histories();
+        } else {
+            self.gaps.remove_driver(id);
+            self.clear_radar_histories();
+        }
     }
     fn select_driver(&self) -> Option<u8> {
         let mut humans = self.players.values().filter(|p| p.local_human());
@@ -147,47 +159,48 @@ impl Engine {
                 self.state = Some(state);
             }
             Packet::Player(player) => {
-                if self.selected == Some(player.plid) {
-                    self.delta.reset_lap();
-                }
                 // NPL for an existing PLID means re-entry or car replacement.
                 if self.players.contains_key(&player.plid) {
-                    self.clear_histories();
+                    self.forget_driver_history(player.plid, "local car re-entered or was replaced");
+                }
+                self.players.insert(player.plid, player);
+            }
+            Packet::PlayerSnapshot(player) => {
+                // Refreshing the roster must not look like re-entering the race.
+                if self.players.get(&player.plid).is_some_and(|old| {
+                    old.ucid != player.ucid
+                        || old.model != player.model
+                        || old.kind != player.kind
+                        || old.in_garage
+                }) {
+                    self.forget_driver_history(player.plid, "driver ownership or car changed");
                 }
                 self.players.insert(player.plid, player);
             }
             Packet::Pit(id) => {
-                if self.selected == Some(id) {
-                    self.delta.reset_lap();
-                }
+                self.forget_driver_history(id, "local driver pitted");
                 if let Some(p) = self.players.get_mut(&id) {
                     p.in_garage = true;
                 }
-                self.clear_histories();
             }
             Packet::Leave(id) => {
-                if self.selected == Some(id) {
-                    self.delta.reset_lap();
-                }
+                self.forget_driver_history(id, "local driver left the race");
                 self.players.remove(&id);
-                self.clear_histories();
             }
             Packet::ConnectionLeft(id) => {
-                if self
-                    .selected
-                    .and_then(|p| self.players.get(&p))
-                    .is_some_and(|p| p.ucid == id)
-                {
-                    self.delta.reset_lap();
+                let leaving: Vec<_> = self
+                    .players
+                    .values()
+                    .filter(|p| p.ucid == id)
+                    .map(|p| p.plid)
+                    .collect();
+                for plid in leaving {
+                    self.forget_driver_history(plid, "local connection left");
                 }
                 self.players.retain(|_, p| p.ucid != id);
-                self.clear_histories();
             }
             Packet::Reset(id) => {
-                if self.selected == Some(id) {
-                    self.delta.reset_lap();
-                }
-                self.clear_histories();
+                self.forget_driver_history(id, "local car reset");
             }
             Packet::Session => {
                 self.delta.reset_reference();
@@ -208,16 +221,6 @@ impl Engine {
                     self.delta.invalidate();
                 }
             }
-            Packet::Split {
-                plid,
-                time_ms,
-                split,
-                penalty,
-            } => {
-                if self.selected == Some(plid) && split == 1 {
-                    self.delta.split_report(time_ms, penalty, time);
-                }
-            }
             Packet::RaceStart { info, requested } => {
                 if !requested {
                     self.delta.reset_reference();
@@ -226,11 +229,16 @@ impl Engine {
                 self.delta.set_track(info.clone());
                 self.gaps.set_track(info);
             }
-            Packet::Takeover(_) => {
-                self.delta.reset_reference();
+            Packet::Takeover(id) => {
                 // Re-request roster before trusting ownership again.
-                self.players.clear();
-                self.clear_histories();
+                if self.selected == Some(id) {
+                    self.delta.reset_reference();
+                    self.players.clear();
+                    self.clear_histories();
+                } else {
+                    self.forget_driver_history(id, "driver ownership changed");
+                    self.players.remove(&id);
+                }
             }
             Packet::Camera(id) => {
                 if self.selected == Some(id) {
@@ -242,17 +250,29 @@ impl Engine {
             Packet::Tiny(10..=12) => self.clear(),
             Packet::Mci(cars) => {
                 if let Some(cars) = self.assembler.push(cars)? {
-                    let teleported = self.snapshots.back().is_some_and(|last| {
-                        let dt = time.saturating_sub(last.time) as f64 / 1000.0;
-                        cars.iter().any(|c| {
-                            last.cars
-                                .iter()
-                                .find(|old| old.plid == c.plid)
-                                .is_some_and(|old| old.pose.distance(c.pose) > 10.0 + dt * 150.0)
+                    let teleported: Vec<_> = self
+                        .snapshots
+                        .back()
+                        .map(|last| {
+                            let dt = time.saturating_sub(last.time) as f64 / 1000.0;
+                            cars.iter()
+                                .filter(|c| {
+                                    last.cars.iter().find(|old| old.plid == c.plid).is_some_and(
+                                        |old| old.pose.distance(c.pose) > 10.0 + dt * 150.0,
+                                    )
+                                })
+                                .map(|c| c.plid)
+                                .collect()
                         })
-                    });
-                    if teleported {
-                        self.clear_histories();
+                        .unwrap_or_default();
+                    if self.selected.is_some_and(|id| teleported.contains(&id)) {
+                        self.delta
+                            .reset_lap_with_reason("local car position jumped");
+                    }
+                    if !teleported.is_empty() {
+                        // Each gap history validates its own car. An opponent
+                        // teleport must not erase everyone else's passages.
+                        self.clear_radar_histories();
                     }
                     self.gaps.update(&cars, time);
                     if let Some(car) = self
@@ -268,10 +288,10 @@ impl Engine {
                         }) {
                             self.delta.update(car, time);
                         } else {
-                            self.delta.reset_lap();
+                            self.delta.suspend("Waiting for matching OutSim telemetry");
                         }
                     } else {
-                        self.delta.reset_lap();
+                        self.delta.suspend("Waiting for local track progress");
                     }
                     self.snapshots.push_back(Snapshot { time, cars });
                     while self.snapshots.len() > 64 {
@@ -317,7 +337,7 @@ impl Engine {
             || local.pose.distance(sample.pose) > 12.0
             || wrap_angle(local.pose.heading - sample.pose.heading).abs() > 1.0
         {
-            self.delta.reset_lap();
+            self.delta.suspend("Waiting for matching OutSim telemetry");
             self.delta_association = None;
             self.poses.clear();
             self.outsim_clock = None;
@@ -337,13 +357,14 @@ impl Engine {
                     return;
                 }
                 self.poses.clear();
-                self.delta.reset_lap();
+                self.delta
+                    .reset_lap_with_reason("OutSim clock restarted after silence");
             }
         }
         if self.poses.back().is_some_and(|last| {
             last.pose.distance(sample.pose) > 10.0 + time.saturating_sub(last.time) as f64 * 0.15
         }) {
-            self.delta.reset_lap();
+            self.delta.reset_lap_with_reason("OutSim position jumped");
             self.poses.clear();
         }
         self.outsim_clock = Some(sample.time_ms);
@@ -378,7 +399,6 @@ impl Engine {
         if !radar.live || radar.uncertain {
             return crate::delta::DeltaFrame {
                 best_seconds: delta.best_seconds,
-                sector_reference_seconds: delta.sector_reference_seconds,
                 ..crate::delta::DeltaFrame::unavailable(&radar.status)
             };
         }

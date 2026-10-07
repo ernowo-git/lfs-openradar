@@ -77,6 +77,35 @@ fn five_second_gap_and_behind_cross_wrap_with_race_neighbors() {
     assert_eq!(frame.ahead.laps, None);
     assert_eq!(frame.behind.measured_age_ms, Some(0));
 }
+
+#[test]
+fn cached_passages_survive_coalesced_updates_lag_and_briefly_missing_cars() {
+    for missing in [true, false] {
+        let mut engine = history();
+        engine.update(&[car(1, 2, 2040), car(2, 1, 2090), car(3, 3, 2017)], 10_000);
+        let frame = engine.frame(Some(1), &players(), 10_000, 250);
+        assert_eq!(frame.ahead.seconds, Some(5.0));
+        assert_eq!(frame.behind.seconds, Some(2.3));
+        let mut samples = vec![car(1, 2, 2041), car(2, 1, 2091), car(3, 3, 2018)];
+        if missing {
+            samples.remove(0);
+        } else {
+            samples[0].info = 32;
+        }
+        engine.update(&samples, 10_100);
+        assert!(
+            engine
+                .frame(Some(1), &players(), 10_100, 250)
+                .ahead
+                .seconds
+                .is_none()
+        );
+        engine.update(&[car(1, 2, 2042), car(2, 1, 2092), car(3, 3, 2019)], 10_200);
+        let recovered = engine.frame(Some(1), &players(), 10_200, 250);
+        assert_eq!(recovered.ahead.seconds, Some(5.0));
+        assert_eq!(recovered.behind.seconds, Some(2.3));
+    }
+}
 #[test]
 fn changing_speed_still_compares_the_same_point_and_expired_history_is_unavailable() {
     let mut engine = GapEngine::default();

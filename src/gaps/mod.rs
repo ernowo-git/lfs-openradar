@@ -42,6 +42,8 @@ struct Passage {
 struct History {
     passages: VecDeque<Passage>,
     latest: Option<(Car, u64)>,
+    unreliable: bool,
+    present: bool,
 }
 #[derive(Default)]
 pub struct GapEngine {
@@ -51,6 +53,9 @@ pub struct GapEngine {
 impl GapEngine {
     pub fn clear(&mut self) {
         self.histories.clear();
+    }
+    pub fn remove_driver(&mut self, id: u8) {
+        self.histories.remove(&id);
     }
     pub fn set_track(&mut self, track: TrackInfo) {
         if self.track.as_ref() != Some(&track) {
@@ -69,11 +74,26 @@ impl GapEngine {
         let Some(track) = self.track.as_ref().filter(|t| t.supports_gaps()) else {
             return;
         };
-        self.histories
-            .retain(|id, _| cars.iter().any(|c| c.plid == *id));
+        self.histories.retain(|id, history| {
+            let present = cars.iter().any(|c| c.plid == *id);
+            history.present = present;
+            if !present {
+                history.unreliable = true;
+            }
+            present
+                || history
+                    .latest
+                    .as_ref()
+                    .is_some_and(|(_, at)| time.saturating_sub(*at) <= 500)
+        });
         for car in cars {
             let history = self.histories.entry(car.plid).or_default();
-            if car.node >= track.nodes || car.info & (4 | 8 | 32) != 0 {
+            history.present = true;
+            if car.info & 32 != 0 {
+                history.unreliable = true;
+                continue;
+            }
+            if car.node >= track.nodes || car.info & (4 | 8) != 0 {
                 *history = History::default();
                 continue;
             }
@@ -81,7 +101,7 @@ impl GapEngine {
             if let Some((old, old_time)) = &history.latest {
                 let distance = progress - progress_of(old, track);
                 // Never interpolate across silence, backwards driving, or a reset.
-                if time <= *old_time
+                if time < *old_time
                     || time - old_time > 500
                     || distance < 0
                     || distance > i64::from(track.nodes / 4).max(1)
@@ -101,6 +121,7 @@ impl GapEngine {
             }
             // The initial node is deliberately not a known crossing.
             history.latest = Some((car.clone(), time));
+            history.unreliable = false;
             while history
                 .passages
                 .front()
@@ -134,6 +155,9 @@ impl GapEngine {
         let Some((me, time)) = &local.latest else {
             return GapFrame::unavailable("Unreliable local progress");
         };
+        if local.unreliable {
+            return GapFrame::unavailable("Track progress delayed");
+        }
         if now.saturating_sub(*time) > stale_ms {
             return GapFrame::unavailable("Telemetry stale");
         }
@@ -143,6 +167,7 @@ impl GapEngine {
         let current: Vec<_> = self
             .histories
             .values()
+            .filter(|h| h.present)
             .filter(|h| {
                 h.latest
                     .as_ref()
@@ -187,6 +212,10 @@ impl GapEngine {
                 status: "Building passage history".into(),
                 ..Default::default()
             };
+            if other.unreliable {
+                result.status = "Track progress delayed".into();
+                return result;
+            }
             if now.saturating_sub(*car_time) > stale_ms {
                 result.status = "Telemetry stale".into();
                 return result;
