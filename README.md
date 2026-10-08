@@ -168,6 +168,29 @@ the Ubuntu build dependencies in the [CI workflow](.github/workflows/ci.yml).
 
 </details>
 
+<details>
+<summary>Arch Linux</summary>
+
+Update the system and install the native development dependencies from the
+official repositories before building:
+
+```bash
+sudo pacman -Syu --needed \
+  base-devel pkgconf \
+  libx11 libxrandr libxcursor libxi libxinerama \
+  libxkbcommon libxkbcommon-x11 wayland \
+  libglvnd systemd-libs
+```
+
+[`base-devel`](https://archlinux.org/packages/core/any/base-devel/) provides the
+C/C++ compiler and build tools. Arch packages include their development headers;
+[`libglvnd`](https://archlinux.org/packages/extra/x86_64/libglvnd/files/) supplies
+OpenGL/EGL headers, and
+[`systemd-libs`](https://archlinux.org/packages/core/x86_64/systemd-libs/files/)
+supplies libudev.
+
+</details>
+
 ### Build from source
 
 ```text
