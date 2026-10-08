@@ -114,7 +114,7 @@ struct App {
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
-    gap_overlays: [GapOverlay; 4],
+    gap_overlays: [GapOverlay; 5],
     tab: ControlTab,
     opening_layout_passes: u8,
 }
@@ -204,6 +204,7 @@ impl App {
             GapOverlay::new(&config.gap_behind, &overlay_data),
             GapOverlay::new(&config.performance_delta, &overlay_data),
             GapOverlay::new(&config.speed_dashboard, &overlay_data),
+            GapOverlay::new(&config.fuel, &overlay_data),
         ];
         let mut app = Self {
             overlay_data: Arc::new(Mutex::new(overlay_data)),
@@ -437,12 +438,12 @@ impl App {
                 } else {
                     match crate::setup::prepare_outgauge(std::path::Path::new(self.config.lfs_directory.trim()), &self.config)
                         .and_then(|plan| crate::setup::apply_outsim(&plan)) {
-                        Ok(result) => format!("OutGauge configured in {}. Start LFS and enable Speed dashboard.", result.cfg_path.display()),
+                        Ok(result) => format!("OutGauge configured in {}. Start LFS and enable Speed dashboard or Fuel.", result.cfg_path.display()),
                         Err(error) => error,
                     }
                 });
             }
-            ui.label(egui::RichText::new("OutGauge supplies the speed dashboard on a separate UDP port. A backup is saved before changing cfg.txt.").small());
+            ui.label(egui::RichText::new("OutGauge supplies Speed dashboard and Fuel through one UDP receiver. A backup is saved before changing cfg.txt.").small());
             if let Some(message) = &self.setup_message { ui.label(message); }
             ui.label(egui::RichText::new("Save settings remembers the selected LFS folder.").small());
         });
@@ -470,6 +471,7 @@ impl App {
             &mut self.config.gap_behind,
             &mut self.config.performance_delta,
             &mut self.config.speed_dashboard,
+            &mut self.config.fuel,
         ]) {
             if let Ok(mut feedback) = gap.feedback.lock() {
                 if let Some(position) = feedback.moved_to.take() {
@@ -508,12 +510,19 @@ impl App {
                     "performance-delta-overlay",
                     "LFS OpenRadar · Performance delta",
                 )
-            } else {
+            } else if index == 3 {
                 (
                     Gadget::Dashboard,
                     &self.config.speed_dashboard,
                     "speed-dashboard-overlay",
                     "LFS OpenRadar · Speed dashboard",
+                )
+            } else {
+                (
+                    Gadget::Fuel,
+                    &self.config.fuel,
+                    "fuel-overlay",
+                    "LFS OpenRadar · Fuel",
                 )
             };
             let visible = overlay_visible(
@@ -555,6 +564,7 @@ impl App {
                     gap.editing,
                     match kind {
                         Gadget::Dashboard => super::speed_dashboard::SIZE,
+                        Gadget::Fuel => super::fuel_style::SIZE,
                         Gadget::Delta => theme.delta.panel.size,
                         Gadget::Ahead => theme.ahead.panel.size,
                         Gadget::Behind => theme.behind.panel.size,
@@ -872,17 +882,18 @@ impl App {
                                             if let Some(code) = &snapshot.dashboard.car && code != "DEMO" {
                                                 let profile = self.config.cars.get(code);
                                                 ui.label(format!("Car: {} ({code})", profile.map_or(code.as_str(), |p| p.name.as_str())));
-                                                if profile.is_none() { ui.label(egui::RichText::new("No saved RPM limit; edit the value below or press Set.").small()); }
-                                                let mut max_rpm = profile.map_or(8000, |p| p.max_rpm);
+                                                let has_limit = profile.is_some_and(|p| p.max_rpm > 0);
+                                                if !has_limit { ui.label(egui::RichText::new("No saved RPM limit; edit the value below or press Set.").small()); }
+                                                let mut max_rpm = profile.filter(|p| p.max_rpm > 0).map_or(8000, |p| p.max_rpm);
                                                 let changed = ui.horizontal(|ui| {
                                                     ui.label("Max RPM");
                                                     let changed = ui.add(egui::DragValue::new(&mut max_rpm).range(1..=100000).speed(100)).changed();
-                                                    let set = profile.is_none() && ui.button("Set").clicked();
+                                                    let set = !has_limit && ui.button("Set").clicked();
                                                     changed || set
                                                 }).inner;
                                                 if changed {
                                                     self.config.cars.entry(code.clone()).or_insert(crate::config::CarProfile {
-                                                        name: code.clone(), max_rpm,
+                                                        name: code.clone(), max_rpm, ..Default::default()
                                                     }).max_rpm = max_rpm;
                                                 }
                                             }
@@ -893,6 +904,19 @@ impl App {
                                             gap_position_controls(ui, &mut self.config.speed_dashboard, &mut gap.window, gap.editing);
                                             ui.add(egui::Slider::new(&mut self.config.speed_dashboard.scale, 0.5..=2.0).text("Scale"));
                                             ui.label(egui::RichText::new("ABS shows enabled/triggered states. TC mirrors its warning lamp. A dash means unavailable.").small());
+                                        }
+                                        Gadget::Fuel => {
+                                            let previous = self.config.fuel.enabled;
+                                            ui.checkbox(&mut self.config.fuel.enabled, "Enabled");
+                                            if previous != self.config.fuel.enabled && self.demo.is_none() { self.connect(); }
+                                            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 130.0), egui::Sense::hover());
+                                            super::fuel_style::paint(ui.painter(), rect, &snapshot.fuel);
+                                            ui.label(egui::RichText::new(snapshot.outgauge_error.as_deref().unwrap_or(&snapshot.fuel.status)).small());
+                                            let gap = &mut self.gap_overlays[4];
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            gap_position_controls(ui, &mut self.config.fuel, &mut gap.window, gap.editing);
+                                            ui.add(egui::Slider::new(&mut self.config.fuel.scale, 0.5..=2.0).text("Scale"));
+                                            ui.label(egui::RichText::new("REFUEL is additional tank %. * means more than one stop. Usage uses up to 5 full laps; timed-race finish estimates are unavailable.").small());
                                         }
                                         Gadget::Radar => {
                                             ui.checkbox(&mut self.config.radar_enabled, "Enabled");
@@ -1001,6 +1025,7 @@ enum Gadget {
     Behind,
     Delta,
     Dashboard,
+    Fuel,
 }
 const GADGETS: &[Gadget] = &[
     Gadget::Radar,
@@ -1008,6 +1033,7 @@ const GADGETS: &[Gadget] = &[
     Gadget::Ahead,
     Gadget::Behind,
     Gadget::Delta,
+    Gadget::Fuel,
 ];
 impl Gadget {
     fn title(self) -> &'static str {
@@ -1017,6 +1043,7 @@ impl Gadget {
             Self::Behind => "Gap behind",
             Self::Delta => "Performance delta",
             Self::Dashboard => "Speed dashboard",
+            Self::Fuel => "Fuel",
         }
     }
 }
@@ -1120,7 +1147,7 @@ fn project_link(ui: &mut egui::Ui, link: ProjectLink) -> egui::Response {
 }
 fn fit_panel_to_monitor(desired: Vec2, monitor: Option<Vec2>) -> Vec2 {
     monitor.map_or(desired, |monitor| {
-        desired.min((monitor - Vec2::new(64.0, 100.0)).max(Vec2::new(380.0, 400.0)))
+        desired.min((monitor - Vec2::new(64.0, 100.0)).max(Vec2::splat(1.0)))
     })
 }
 fn overlay_visible(
@@ -1256,6 +1283,15 @@ fn render_gap_overlay(
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
     let theme = theme::resolve(data.config.hud_style);
+    if kind == Gadget::Fuel {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                super::fuel_style::paint(ui.painter(), ui.max_rect(), &snapshot.fuel);
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
     if kind == Gadget::Dashboard {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -2289,6 +2325,57 @@ mod tests {
         assert_eq!(app.config.performance_delta.window_x, Some(-800.0));
         assert!(!app.config.performance_delta.enabled);
         assert!(app.config.gap_ahead.enabled && app.config.radar_enabled);
+    }
+
+    #[test]
+    fn fuel_viewport_refreshes_and_closes_independently() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.set_embed_viewports(false);
+        let mut config = Config::default();
+        config.fuel.enabled = true;
+        config.speed_dashboard.enabled = true;
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        app.gap_overlays[4].editing = true;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        let id = ViewportId::from_hash_of("fuel-overlay");
+        assert_eq!(output.viewport_output[&id].builder.decorations, Some(true));
+        assert_eq!(
+            output.viewport_output[&id].builder.inner_size,
+            Some(super::super::fuel_style::SIZE)
+        );
+        let callback = output.viewport_output[&id].viewport_ui_cb.clone().unwrap();
+        let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
+        let mut input = egui::RawInput {
+            viewport_id: id,
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::ZERO,
+                super::super::fuel_style::SIZE,
+            )),
+            ..Default::default()
+        };
+        input.viewports.insert(
+            id,
+            egui::ViewportInfo {
+                parent: Some(ViewportId::ROOT),
+                ..Default::default()
+            },
+        );
+        let output = ctx.run(input, |child| callback(child));
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape,
+            Shape::Text(t) if t.galley.text() == "−7.7")));
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape,
+            Shape::Text(t) if t.galley.text() == "12.9")));
+        assert!(output.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
+        assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
+        app.gap_overlays[4].feedback.lock().unwrap().moved_to = Some(Pos2::new(-800.0, 440.0));
+        app.gap_overlays[4].feedback.lock().unwrap().closed = true;
+        app.receive_overlay_feedback();
+        assert_eq!(app.config.fuel.window_x, Some(-800.0));
+        assert!(!app.config.fuel.enabled);
+        assert!(app.config.speed_dashboard.enabled && app.config.radar_enabled);
     }
 
     #[test]

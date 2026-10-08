@@ -46,11 +46,16 @@ impl Default for GapSettings {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CarProfile {
     pub name: String,
+    /// Zero is accepted for legacy capacity-only profiles; the RPM bar stays unavailable.
+    #[serde(default)]
     pub max_rpm: u32,
+    /// Read old settings without exposing or saving the retired litres option.
+    #[serde(default, skip_serializing)]
+    pub fuel_tank_litres: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -66,6 +71,7 @@ pub struct Config {
     pub outgauge_id: i32,
     pub cars: BTreeMap<String, CarProfile>,
     pub speed_dashboard: GapSettings,
+    pub fuel: GapSettings,
     /// Percentage of the configured RPM limit that starts the red/blue blink.
     pub rpm_blink_threshold_percent: u8,
     /// Time each RPM blink color is shown, in milliseconds.
@@ -125,9 +131,11 @@ impl Default for Config {
                 CarProfile {
                     name: "XF GTI".into(),
                     max_rpm: 8000,
+                    fuel_tank_litres: None,
                 },
             )]),
             speed_dashboard: GapSettings::default(),
+            fuel: GapSettings::default(),
             rpm_blink_threshold_percent: 95,
             rpm_blink_interval_ms: 100,
             outsim_options: 0x1ff,
@@ -206,6 +214,9 @@ impl Config {
     pub fn expected_outsim_id(&self) -> Option<i32> {
         (self.outsim_id != 0).then_some(self.outsim_id)
     }
+    pub fn needs_outgauge(&self) -> bool {
+        self.speed_dashboard.enabled || self.fuel.enabled
+    }
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         // TOML errors can echo source lines containing the password.
@@ -219,6 +230,8 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<(), String> {
         self.validate()?;
         let mut saved = self.clone();
+        // These legacy profiles only configured the retired litres display.
+        saved.cars.retain(|_, profile| profile.max_rpm > 0);
         saved.prepare_gap_positions();
         let raw = toml::to_string_pretty(&saved).map_err(|e| e.to_string())?;
         std::fs::write(path, raw).map_err(|e| e.to_string())
@@ -230,6 +243,7 @@ impl Config {
             (&mut self.gap_behind, 0.88, 100.0),
             (&mut self.performance_delta, 0.5, 200.0),
             (&mut self.speed_dashboard, 0.5, 360.0),
+            (&mut self.fuel, 0.5, 586.0),
         ] {
             let legacy = settings.legacy_x.is_some() || settings.legacy_y.is_some();
             settings.window_x.get_or_insert(if legacy {
@@ -256,10 +270,20 @@ impl Config {
             return Err("rpm_blink_interval_ms must be 50..500".into());
         }
         for (code, profile) in &self.cars {
-            if code.trim().is_empty() || profile.name.trim().is_empty() || profile.max_rpm == 0 {
+            if code.trim().is_empty()
+                || profile.name.trim().is_empty()
+                || (profile.max_rpm == 0 && profile.fuel_tank_litres.is_none())
+            {
                 return Err(
-                    "car profiles require a car code, a name, and a positive max_rpm".into(),
+                    "car profiles require a car code, a name, and an RPM limit or fuel capacity"
+                        .into(),
                 );
+            }
+            if profile
+                .fuel_tank_litres
+                .is_some_and(|v| !v.is_finite() || v <= 0.0)
+            {
+                return Err("fuel tank capacity must be finite and positive".into());
             }
         }
         if !self.outgauge_bind.ip().is_loopback() || self.outgauge_bind.port() == 0 {
@@ -272,6 +296,7 @@ impl Config {
             &self.gap_behind,
             &self.performance_delta,
             &self.speed_dashboard,
+            &self.fuel,
         ] {
             if [settings.window_x, settings.window_y]
                 .iter()
@@ -311,7 +336,7 @@ impl Config {
         {
             return Err("OutSim options must include TIME and MAIN, or be zero for legacy".into());
         }
-        if self.speed_dashboard.enabled
+        if self.needs_outgauge()
             && self.outgauge_bind == self.outsim_bind
             && matches!(
                 crate::lfs::outsim::packet_size(self.outsim_options, self.expected_outsim_id())?,

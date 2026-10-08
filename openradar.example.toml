@@ -6,7 +6,7 @@ insim_password = ""
 # This setting alone does not change LFS; use Enable InSim at startup in the panel.
 lfs_directory = ""
 outsim_bind = "127.0.0.1:30000"
-# Optional speed dashboard telemetry; uses its own UDP endpoint.
+# Optional Speed dashboard and Fuel telemetry; both share this UDP endpoint.
 outgauge_bind = "127.0.0.1:30001"
 outgauge_id = 24602
 # RPM bar starts alternating red/blue at this percentage (1..100).
@@ -69,7 +69,14 @@ window_x = 376.0
 window_y = 520.0
 scale = 1.0
 
-# Dashboard RPM scales by LFS car code (or six-digit vehicle mod ID).
+# Independent fuel level, range, and additional fuel needed to finish.
+[fuel]
+enabled = false
+window_x = 376.0
+window_y = 746.0
+scale = 1.0
+
+# Car settings by LFS car code (or six-digit vehicle mod ID).
 [cars.XFG]
 name = "XF GTI"
 max_rpm = 8000

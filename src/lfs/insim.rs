@@ -87,6 +87,7 @@ pub enum Packet {
         plid: u8,
         time_ms: u32,
         penalty: u8,
+        laps_done: u16,
     },
     Split {
         plid: u8,
@@ -95,6 +96,12 @@ pub enum Packet {
         penalty: u8,
     },
     InvalidLap(u8),
+    PitStop(u8),
+    PitLane {
+        plid: u8,
+        entered: bool,
+    },
+    Finished(u8),
     LayoutChanged,
     Mci(Vec<Car>),
     Other,
@@ -249,6 +256,7 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                 plid: p[3],
                 time_ms: u32_at(p, 4),
                 penalty: p[17],
+                laps_done: u16_at(p, 12),
             }
         }
         25 => {
@@ -262,7 +270,21 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
         }
         26 => {
             exact(24)?;
-            Packet::InvalidLap(p[3])
+            Packet::PitStop(p[3])
+        }
+        28 => {
+            exact(8)?;
+            if p[4] > 4 {
+                return Err("invalid pit lane event".into());
+            }
+            Packet::PitLane {
+                plid: p[3],
+                entered: p[4] != 0,
+            }
+        }
+        34 => {
+            exact(20)?;
+            Packet::Finished(p[3])
         }
         30 => {
             exact(8)?;

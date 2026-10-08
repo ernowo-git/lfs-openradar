@@ -43,6 +43,7 @@ X11. Wayland and Gamescope need their own platform work and verification.
 | Gap ahead / behind at timing lines | InSim split/lap events, lap identity and race order | Compare elapsed race times at the same timing line and lap. Identify the compared driver and retain the last measurement with its age. |
 | Continuous gap ahead / behind | InSim MCI path node/lap/order/positions + track path/progress model; OutSim local distance where available | Estimate time gaps from matching progress histories. Label them estimated and withhold values when progress or source association is unreliable. |
 | Live performance delta | InSim MCI path nodes/pose, `IS_LAP`, `IS_HLV`, and OutSim association | Implemented on the feature branch: estimate time gain/loss against a fully recorded session-best lap, interpolate progress between reference nodes, and display a trend in an independent gadget. Live driving acceptance remains pending. |
+| Fuel | OutGauge fuel fraction + InSim race length, progress, lap/pit/finish events | Implemented: live tank percentage, range from the latest five usable laps, and additional fuel needed for lap-count races. Timed-race finish prediction and live driving acceptance remain pending. |
 
 The installed LFS developer file `docs/OutSimPack.txt` defines `OSO_DRIVE` as
 option bit `0x20`, with Gear and EngineAngVel, and `OSO_DISTANCE` as `0x40`, with
@@ -53,11 +54,11 @@ Legacy OutSim has no drive block, so it can support the radar without supplying
 gear/RPM widgets. The [official InSim specification](https://www.lfs.net/programmer/insim)
 points to that developer file and documents timing events and MCI progress fields.
 
-OutGauge remains an optional later dashboard adapter for fields such as fuel and
-dashboard lights. Gear and RPM do not require it when the modern OutSim drive
-block is enabled. Future OutGauge support must validate its own layout and
-driver association, and coexist with other UDP consumers. Existing behavior
-ignores standard OutGauge packets; it does not decode them.
+OutGauge now supplies the Speed dashboard and Fuel gadgets through one optional
+receiver, with packet layout, ID, timestamp, and driver-association checks.
+These gadgets work without OutSim and can share its UDP port when packet sizes
+are unambiguous. See [Speed dashboard](configuration.md#speed-dashboard) and
+[Fuel](configuration.md#fuel) for setup and supported estimates.
 
 ## OpenRadar internal architecture
 

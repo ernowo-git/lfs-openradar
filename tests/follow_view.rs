@@ -98,6 +98,7 @@ fn record(e: &mut Engine, event: Option<Packet>) {
             e.packet(
                 Packet::Lap {
                     plid: 2,
+                    laps_done: 1,
                     time_ms: 4000,
                     penalty: 0,
                 },
@@ -189,6 +190,7 @@ fn another_viewed_ai_builds_its_own_reference_after_switching() {
             e.packet(
                 Packet::Lap {
                     plid: 1,
+                    laps_done: 1,
                     time_ms: 5000,
                     penalty: 0,
                 },
@@ -232,6 +234,7 @@ fn opponent_lifecycle_and_roster_refresh_do_not_break_reference_recording() {
         Packet::PlayerSnapshot(driver(2)),
         Packet::Lap {
             plid: 1,
+            laps_done: 1,
             time_ms: 1,
             penalty: 1,
         },

@@ -8,6 +8,8 @@ mod folder_picker;
 #[cfg(feature = "desktop")]
 mod fonts;
 #[cfg(feature = "desktop")]
+mod fuel_style;
+#[cfg(feature = "desktop")]
 mod gadget_style;
 #[cfg(feature = "desktop")]
 mod gap_style;

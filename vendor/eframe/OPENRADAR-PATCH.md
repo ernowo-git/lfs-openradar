@@ -6,7 +6,8 @@ unchanged. Upstream source is licensed MIT OR Apache-2.0; the MIT license and
 copyright notice are included here.
 
 Changes cover `src/native/run.rs`, `src/native/wgpu_integration.rs`, and the added
-`src/native/redraw_ledger.rs`.
+`src/native/redraw_ledger.rs` and `src/native/window_geometry.rs`, plus module
+registration in `src/native/mod.rs`.
 
 ## Redraw delivery
 
@@ -76,3 +77,16 @@ check whether a released upstream fix replaces this patch and remove the local
 override only after rechecking focus changes, position mode, and continuous
 overlay animation without resizing, plus background transparency over the game
 in both normal and position modes.
+
+## Initial window geometry
+
+Before creating a wgpu window, the backend fits its size and initial position
+to the connected monitor containing the requested position, or the primary
+monitor when that position is off-screen. Monitor bounds use each monitor's
+DPI scale and the egui zoom factor. Decorated windows reserve space for borders
+and desktop controls. Borderless gadgets fit their entire client area within
+the screen. Minimum sizes are reduced when needed to fit small screens.
+
+This check runs only at window creation; later native dragging and explicit
+position edits keep the existing behavior. GPU-free checks in
+`tests/window_geometry.rs` compile the same geometry helper as the backend.

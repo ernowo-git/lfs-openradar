@@ -170,6 +170,7 @@ fn car_profiles_round_trip_and_validate_without_inventing_rpm_limits() {
         CarProfile {
             name: "XF GTI".into(),
             max_rpm: 0,
+            fuel_tank_litres: None,
         },
     );
     assert!(config.validate().is_err());

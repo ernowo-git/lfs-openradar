@@ -8,6 +8,7 @@ pub const ENGINE: u32 = 1 << 11;
 pub const FULLBEAM: u32 = 1 << 1;
 pub const HEADLIGHTS: u32 = FULLBEAM | (1 << 14) | (1 << 16);
 pub const ENGINE_SEVERE: u32 = 0x10000000;
+pub const FUEL_WARNING: u32 = 1 << 15;
 
 #[derive(Clone, Debug, Default)]
 pub struct Sample {
@@ -18,6 +19,7 @@ pub struct Sample {
     pub gear: u8,
     pub speed_mps: f32,
     pub rpm: f32,
+    pub fuel: f32,
     pub available: u32,
     pub lights: u32,
 }
@@ -59,6 +61,10 @@ pub fn decode(p: &[u8], id: i32) -> Result<Sample, String> {
     }
     let speed_mps = read_float(12);
     let rpm = read_float(16);
+    let fuel = read_float(28);
+    if !(0.0..=1.0).contains(&fuel) {
+        return Err("outgauge fuel must be between zero and one".into());
+    }
     if speed_mps < 0.0 || rpm < 0.0 || p[10] > 31 {
         return Err("OutGauge contains invalid speed, RPM, or gear".into());
     }
@@ -70,6 +76,7 @@ pub fn decode(p: &[u8], id: i32) -> Result<Sample, String> {
         gear: p[10],
         speed_mps,
         rpm,
+        fuel,
         available: u32_at(p, 40),
         lights: u32_at(p, 44),
     })

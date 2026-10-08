@@ -2,11 +2,14 @@
 
 use eframe::egui::{Align2, Color32, Stroke, Vec2};
 
+pub(super) const DASHBOARD_BACKGROUND: Color32 =
+    Color32::from_rgba_unmultiplied_const(37, 37, 37, 102);
+
 #[derive(Clone, Copy)]
 pub(super) enum TextFont {
     Proportional,
     Body,
-    Display,
+    Numeric,
 }
 
 #[derive(Clone, Copy)]

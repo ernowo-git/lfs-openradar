@@ -1,7 +1,8 @@
 # CI and automatic releases
 
-The workflows live in [ci.yml](../.github/workflows/ci.yml) and
-[release.yml](../.github/workflows/release.yml). They take effect once committed
+The workflows live in [ci.yml](../.github/workflows/ci.yml),
+[release.yml](../.github/workflows/release.yml), and
+[cleanup-releases.yml](../.github/workflows/cleanup-releases.yml). They take effect once committed
 and pushed to GitHub. Their first hosted execution still needs verification;
 the workflow definitions, release script, and Windows packaging are checked locally.
 
@@ -20,7 +21,7 @@ Each platform checks:
 - `cargo test --locked` and `cargo test --no-default-features --locked`.
 
 PR jobs have read-only repository permissions. Release credentials are used
-only by the publishing job on `main`. CI can also be run manually from the
+only by the publishing and release cleanup jobs. CI can also be run manually from the
 Actions page. To require CI before merging, configure branch protection for
 `Checks (windows-2022)` and `Checks (ubuntu-22.04)` after their first run.
 
@@ -48,12 +49,30 @@ After both builds succeed, the workflow creates a tag such as `v0.3.0` at that
 exact commit and a GitHub Release. GitHub generates notes from the merged PRs
 using [release.yml](../.github/release.yml): features, fixes, documentation, and
 other changes. PRs labeled `skip-changelog` are omitted. Historical short tags
-such as `v0.1` and `v0.2` remain unchanged; future tags include all three version parts.
+such as `v0.1` and `v0.2` keep their original names until their releases are removed
+by cleanup; future tags include all three version parts.
 
 Stable versions publish as normal releases. Versions such as `0.3.0-rc.1`
 publish as prereleases and do not become the latest stable release. The publishing
 job uses the built-in `GITHUB_TOKEN` with `contents: write`; no personal access
 token is needed. GitHub Actions must be enabled in the repository.
+
+## Release retention
+
+[Cleanup Older Releases](../.github/workflows/cleanup-releases.yml) keeps the
+three most recently published releases, including prereleases. Older releases,
+their downloadable assets, and their associated Git tags are deleted. Draft
+releases and tags without a release are left alone.
+
+The release workflow calls cleanup after successful publication because
+[events created with `GITHUB_TOKEN`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
+do not trigger another release workflow. Releases
+published manually also trigger cleanup. To run it manually, open **Actions >
+Cleanup Older Releases > Run workflow** once the workflow is on the default branch.
+
+GitHub places [no total storage or bandwidth limit on release assets](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas); this policy
+keeps the release list short. Actions artifacts and caches have separate storage
+limits. Build artifacts in the release workflow expire after 14 days.
 
 ## Downloads
 
@@ -100,5 +119,5 @@ python -m unittest discover -s .github/scripts -p "test_*.py" -v
 
 Run the Rust commands listed in [the development guide](development.md#testing)
 for application changes. Workflow definitions can additionally be checked with
-`actionlint .github/workflows/ci.yml .github/workflows/release.yml`.
+`actionlint .github/workflows/*.yml`.
 Linux builds run on GitHub's Linux runners; no local Linux build is required.

@@ -41,8 +41,8 @@ const BODY: TextStyle = TextStyle {
     font: TextFont::Body,
     outline: Stroke::NONE,
 };
-const DISPLAY: TextStyle = TextStyle {
-    font: TextFont::Display,
+const NUMERIC: TextStyle = TextStyle {
+    font: TextFont::Numeric,
     outline: Stroke {
         width: 0.8,
         color: Color32::BLACK,
@@ -212,23 +212,23 @@ pub(super) const DELTA: DeltaStyle = DeltaStyle {
         size: Vec2::new(110.0, 44.0),
         offset: Vec2::new(320.0, 25.0),
         neutral: CELL_BACKGROUND,
-        gaining: CELL_BACKGROUND,
-        losing: CELL_BACKGROUND,
-        neutral_text: WHITE,
-        gaining_text: GAIN_TEXT,
-        losing_text: LOSS_TEXT,
+        gaining: GAIN_TEXT,
+        losing: LOSS_TEXT,
+        neutral_text: Color32::WHITE,
+        gaining_text: Color32::WHITE,
+        losing_text: Color32::WHITE,
         corner_radius: 3.0,
     }),
     reference: TextStyle {
         font_size: 27.0,
         offset: Vec2::new(163.5, 47.0),
         align: Align2::CENTER_CENTER,
-        ..DISPLAY
+        ..NUMERIC
     },
     estimate: TextStyle {
         font_size: 32.0,
         offset: Vec2::new(10.0, 94.0),
-        ..DISPLAY
+        ..NUMERIC
     },
     estimate_label: Some(TextStyle {
         font_size: 11.0,

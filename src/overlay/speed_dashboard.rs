@@ -6,7 +6,7 @@ pub(super) const SIZE: Vec2 = Vec2::new(574.0, 210.0);
 const WHITE: Color32 = Color32::from_rgb(240, 240, 240);
 const YELLOW: Color32 = Color32::from_rgb(255, 235, 63);
 const RED: Color32 = Color32::from_rgb(236, 35, 69);
-const BACKGROUND: Color32 = Color32::from_rgba_unmultiplied_const(37, 37, 37, 102);
+use super::gadget_style::DASHBOARD_BACKGROUND as BACKGROUND;
 const RPM_MARKER: Color32 = Color32::from_rgb(37, 37, 37);
 
 #[derive(Clone)]
@@ -383,6 +383,7 @@ mod tests {
             crate::config::CarProfile {
                 name: "XF GTI".into(),
                 max_rpm: 8000,
+                fuel_tank_litres: None,
             },
         );
         assert_eq!(rpm_fraction(&frame, &config), Some(0.8));

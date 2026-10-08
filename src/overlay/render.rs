@@ -288,7 +288,7 @@ fn paint_gadget_text(
     let family = match style.font {
         TextFont::Proportional => FontFamily::Proportional,
         TextFont::Body => FontFamily::Name(super::fonts::BODY.into()),
-        TextFont::Display => FontFamily::Name(super::fonts::DISPLAY.into()),
+        TextFont::Numeric => FontFamily::Name(super::fonts::NUMERIC.into()),
     };
     let font = FontId::new(style.font_size * scale, family);
     let mut text = text.to_string();
@@ -1448,15 +1448,25 @@ mod tests {
                     |shape| matches!(&shape.shape, Shape::Rect(rect) if rect.fill == background)
                 )
             );
-            assert_eq!(background.a(), 77);
-            assert_eq!(background.r(), background.g());
-            assert_eq!(background.g(), background.b());
+            assert_eq!(
+                background,
+                if seconds < 0.0 {
+                    super::super::gt7_style::GAIN_TEXT
+                } else {
+                    Color32::from_rgb(255, 134, 145)
+                }
+            );
+            assert_eq!(foreground, Color32::WHITE);
             assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
                 Shape::Text(text) if text.galley.job.text == expected &&
                     text.galley.job.sections[0].format.color == foreground)));
             assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
                 Shape::Text(text) if text.galley.job.text == lap_time_millis(55.244 + seconds) &&
-                    text.galley.job.sections[0].format.font_id.size == 32.0)));
+                    text.galley.job.sections[0].format.font_id.size == 32.0 &&
+                    text.galley.job.sections[0].format.font_id.family == FontFamily::Name(super::super::fonts::NUMERIC.into()))));
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                Shape::Text(text) if text.galley.job.text == "0:55.244" &&
+                    text.galley.job.sections[0].format.font_id.family == FontFamily::Name(super::super::fonts::NUMERIC.into()))));
             assert!(
                 !output
                     .shapes

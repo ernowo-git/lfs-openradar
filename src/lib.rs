@@ -7,6 +7,7 @@ pub mod config;
 pub mod dashboard;
 pub mod delta;
 pub mod demo;
+pub mod fuel;
 pub mod gaps;
 pub mod lfs;
 pub mod overlay;

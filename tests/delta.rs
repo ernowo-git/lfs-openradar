@@ -313,6 +313,7 @@ fn opponent_events_and_roster_replies_preserve_local_delta_and_neighbor_gaps() {
                     .packet(
                         Packet::Lap {
                             plid: 1,
+                            laps_done: 1,
                             time_ms: 4000,
                             penalty: 0,
                         },
@@ -384,6 +385,7 @@ fn transient_pose_mismatch_or_missing_local_mci_recovers_without_restarting_the_
                     .packet(
                         Packet::Lap {
                             plid: 1,
+                            laps_done: 1,
                             time_ms: 4000,
                             penalty: 0,
                         },
@@ -442,6 +444,7 @@ fn local_resets_and_teleports_discard_recording_but_opponent_teleports_do_not() 
                     .packet(
                         Packet::Lap {
                             plid: 1,
+                            laps_done: 1,
                             time_ms: 4000,
                             penalty: 0,
                         },
@@ -589,6 +592,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
                 .packet(
                     Packet::Lap {
                         plid: 1,
+                        laps_done: 1,
                         time_ms: 4000,
                         penalty: 0,
                     },
@@ -708,6 +712,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                 .packet(
                     Packet::Lap {
                         plid: 1,
+                        laps_done: 1,
                         time_ms: if progress == 40 { 5000 } else { 4000 },
                         penalty: 0,
                     },
@@ -846,11 +851,13 @@ fn lap_and_validity_packets_validate_lengths_and_request_hlvc() {
     lap[1] = 24;
     lap[3] = 1;
     lap[4..8].copy_from_slice(&45678_u32.to_le_bytes());
+    lap[12..14].copy_from_slice(&1_u16.to_le_bytes());
     lap[17] = 2;
     assert!(matches!(
         insim::decode(&lap).unwrap(),
         Packet::Lap {
             plid: 1,
+            laps_done: 1,
             time_ms: 45678,
             penalty: 2
         }

@@ -27,6 +27,7 @@ pub struct Snapshot {
     pub gaps: GapFrame,
     pub delta: crate::delta::DeltaFrame,
     pub dashboard: crate::dashboard::DashboardFrame,
+    pub fuel: crate::fuel::FuelFrame,
     pub outgauge_error: Option<String>,
     pub error: Option<String>,
     pub mci_sets: u64,
@@ -111,7 +112,7 @@ fn request_roster(stream: &mut TcpStream) -> std::io::Result<()> {
 fn receive_outgauge(
     bytes: &[u8],
     config: &Config,
-    player: Option<&insim::Player>,
+    engine: &mut Engine,
     now: u64,
     protocol_ready: bool,
     dashboard: &mut crate::dashboard::DashboardTelemetry,
@@ -119,7 +120,14 @@ fn receive_outgauge(
 ) {
     match outgauge::decode(bytes, config.outgauge_id) {
         Ok(sample) if protocol_ready => {
-            dashboard.receive(sample, now, player, config.stale_ms);
+            if dashboard.receive(
+                sample.clone(),
+                now,
+                engine.dashboard_player(),
+                config.stale_ms,
+            ) {
+                engine.fuel_sample(&sample, now, config);
+            }
             stats.outgauge_error = None;
         }
         Ok(_) => {}
@@ -138,7 +146,7 @@ fn run(
     let mut engine = Engine::new(config.follow_viewed_car);
     let mut stats = Snapshot::default();
     let mut dashboard = crate::dashboard::DashboardTelemetry::default();
-    let gauge = if config.speed_dashboard.enabled && config.outgauge_bind != config.outsim_bind {
+    let gauge = if config.needs_outgauge() && config.outgauge_bind != config.outsim_bind {
         match UdpSocket::bind(config.outgauge_bind).and_then(|socket| {
             socket.set_nonblocking(true)?;
             Ok(socket)
@@ -373,12 +381,12 @@ fn run(
                     let bytes = &udp_buffer[..size];
                     // A shared socket routes OutGauge separately from radar physics.
                     if matches!(size, 92 | 96) && size != expected_size {
-                        if config.speed_dashboard.enabled {
+                        if config.needs_outgauge() {
                             if config.outgauge_bind == config.outsim_bind {
                                 receive_outgauge(
                                     bytes,
                                     &config,
-                                    engine.dashboard_player(),
+                                    &mut engine,
                                     start.elapsed().as_millis() as u64,
                                     protocol_ready,
                                     &mut dashboard,
@@ -391,7 +399,7 @@ fn run(
                                     0
                                 };
                                 stats.outgauge_error = Some(format!(
-                                    "OutGauge arrives at {} (ID {id}); dashboard expects {} (ID {}). Match the dashboard configuration or use Configure OutGauge with LFS closed.",
+                                    "outgauge arrives at {} (ID {id}); gadgets expect {} (ID {}). Match the telemetry configuration or use Configure OutGauge with LFS closed.",
                                     config.outsim_bind, config.outgauge_bind, config.outgauge_id
                                 ));
                             }
@@ -425,7 +433,7 @@ fn run(
                         receive_outgauge(
                             &udp_buffer[..size],
                             &config,
-                            engine.dashboard_player(),
+                            &mut engine,
                             start.elapsed().as_millis() as u64,
                             protocol_ready,
                             &mut dashboard,
@@ -443,6 +451,7 @@ fn run(
         }
         let render_now = start.elapsed().as_millis() as u64;
         stats.dashboard = dashboard.frame(render_now, &config, engine.dashboard_player());
+        stats.fuel = engine.fuel(render_now, &config);
         stats.connected = protocol_ready;
         stats.frame = engine.frame(render_now, &config);
         stats.gaps = engine.gaps(render_now, &config, &stats.frame);

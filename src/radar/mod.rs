@@ -84,6 +84,7 @@ struct TimedPose {
 pub struct Engine {
     follow_viewed_car: bool,
     delta: crate::delta::DeltaEngine,
+    fuel: crate::fuel::FuelEngine,
     gaps: GapEngine,
     players: BTreeMap<u8, Player>,
     state: Option<State>,
@@ -110,6 +111,7 @@ impl Engine {
     }
     pub fn clear(&mut self) {
         self.delta.clear();
+        self.fuel.clear();
         self.delta_association = None;
         self.gaps.forget_track();
         self.players.clear();
@@ -119,6 +121,7 @@ impl Engine {
         self.clear_histories();
     }
     fn clear_histories(&mut self) {
+        self.fuel.suspend();
         self.delta_association = None;
         self.gaps.clear();
         self.clear_radar_histories();
@@ -134,6 +137,7 @@ impl Engine {
         if self.reference_target == Some(id) {
             if replace {
                 self.delta.reset_reference();
+                self.fuel.reset_history();
             } else {
                 self.delta.reset_lap_with_reason(reason);
             }
@@ -213,6 +217,9 @@ impl Engine {
                 if !self.gaps.track_matches(&state.track) {
                     self.gaps.forget_track();
                 }
+                if !self.fuel.track_matches(&state.track) {
+                    self.fuel.forget_track();
+                }
                 if self.state.as_ref().is_some_and(|old| {
                     old.track != state.track
                         || old.viewed != state.viewed
@@ -285,16 +292,39 @@ impl Engine {
             }
             Packet::Session => {
                 self.delta.reset_reference();
+                self.fuel.reset_history();
                 self.clear_histories();
             }
-            Packet::LayoutChanged => self.delta.reset_reference(),
+            Packet::LayoutChanged => {
+                self.delta.reset_reference();
+                self.fuel.forget_track();
+            }
             Packet::Lap {
                 plid,
                 time_ms,
                 penalty,
+                laps_done,
             } => {
                 if self.selected == Some(plid) {
                     self.delta.lap_report(time_ms, penalty, time);
+                    self.fuel
+                        .lap_report(laps_done, time, self.association_stale_ms);
+                }
+            }
+            Packet::PitStop(id) => {
+                if self.selected == Some(id) {
+                    self.delta.invalidate();
+                    self.fuel.invalidate_lap();
+                }
+            }
+            Packet::PitLane { plid, entered } => {
+                if self.selected == Some(plid) {
+                    self.fuel.pit_lane(entered);
+                }
+            }
+            Packet::Finished(id) => {
+                if self.selected == Some(id) {
+                    self.fuel.finish();
                 }
             }
             Packet::InvalidLap(id) => {
@@ -305,9 +335,11 @@ impl Engine {
             Packet::RaceStart { info, requested } => {
                 if !requested {
                     self.delta.reset_reference();
+                    self.fuel.reset_history();
                     self.clear_histories();
                 }
                 self.delta.set_track(info.clone());
+                self.fuel.set_track(info.clone());
                 self.gaps.set_track(info);
             }
             Packet::Takeover(id) => {
@@ -343,6 +375,7 @@ impl Engine {
                     if self.selected.is_some_and(|id| teleported.contains(&id)) {
                         self.delta
                             .reset_lap_with_reason("local car position jumped");
+                        self.fuel.invalidate_lap();
                     }
                     if !teleported.is_empty() {
                         // Each gap history validates its own car. An opponent
@@ -354,6 +387,7 @@ impl Engine {
                         .selected
                         .and_then(|id| cars.iter().find(|c| c.plid == id))
                     {
+                        self.fuel.update(car, time, self.association_stale_ms);
                         if self.delta_association.is_some_and(|pose| {
                             time.saturating_sub(pose.time) <= self.association_stale_ms
                                 && pose.pose.distance(car.pose) <= 12.0
@@ -365,6 +399,7 @@ impl Engine {
                         }
                     } else {
                         self.delta.suspend("Waiting for local track progress");
+                        self.fuel.invalidate_lap();
                     }
                     self.snapshots.push_back(Snapshot { time, cars });
                     while self.snapshots.len() > 64 {
@@ -381,6 +416,11 @@ impl Engine {
                 .and_then(|id| self.players.get(&id))
                 .map(|p| (p.plid, p.ucid, p.model.clone())),
         );
+        self.fuel.select_driver(
+            selected
+                .and_then(|id| self.players.get(&id))
+                .map(|p| (p.plid, p.ucid, p.model.clone())),
+        );
         if selected.is_some() {
             self.reference_target = selected;
         }
@@ -389,6 +429,19 @@ impl Engine {
             self.selected = selected;
         }
         Ok(())
+    }
+    pub fn fuel_sample(
+        &mut self,
+        sample: &crate::lfs::outgauge::Sample,
+        now: u64,
+        config: &Config,
+    ) {
+        self.association_stale_ms = config.stale_ms;
+        self.fuel.receive(sample, now, config.stale_ms);
+    }
+    pub fn fuel(&self, now: u64, config: &Config) -> crate::fuel::FuelFrame {
+        self.fuel
+            .frame(now, config, self.dashboard_player().is_some())
     }
     pub fn outsim(&mut self, sample: Sample, time: u64, config: &Config) {
         self.association_stale_ms = config.stale_ms;

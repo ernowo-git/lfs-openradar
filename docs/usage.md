@@ -47,8 +47,9 @@ target. See [platform status](#platform-status) for platform limitations and
 ## HUD styles
 
 Choose **Classic** or **GT7-inspired** from **HUD style** at the top of the
-**Gadgets** tab. All four gadgets change immediately, and their cards preview
-the selected appearance. Click **Save settings** to remember the selection;
+**Gadgets** tab. Radar, gaps, and delta change immediately, and their cards preview
+the selected appearance. Speed dashboard and Fuel retain their reference designs
+in either style. Click **Save settings** to remember the selection;
 reconnecting LFS is unnecessary. Positions, scales, enabled gadgets, and
 position mode are retained. Classic remains the default for existing files.
 
@@ -58,8 +59,8 @@ readout. It also adds a red directional player marker, blue opponent markers,
 and pale radar guides. Left/right sectors of the outer circle indicate nearby
 or alongside cars in amber and potential contact in red; gray indicates uncertain
 telemetry. The strongest warning appears on each occupied side, and opponent
-borders stay blue. Faster lap deltas use blue text and slower deltas use red text
-on grey-black timing cells at 30% opacity.
+borders stay blue. Faster lap deltas use a blue cell and slower deltas use a red
+cell, both with white text. The best and estimated lap values use Azeret Mono.
 
 The theme is inspired by GT7's HUD; telemetry and calculations still come from LFS.
 The session-best time is the reference lap; the adjacent delta is the live
@@ -74,7 +75,7 @@ use milliseconds; this display precision does not change telemetry accuracy.
 GT7 colors, cell sizes, borders, offsets, and type sizes are centralized in
 [`gt7_style.rs`](../src/overlay/gt7_style.rs). Gap windows use a base size of
 320 × 106 logical pixels, and delta uses 440 × 132 before your scale is applied.
-Roboto and Orbitron are embedded for this theme, with
+Roboto and Azeret Mono are embedded for this theme, with
 [font licenses](font-licenses.md) included in release archives. Radar's cosmetic
 vertical strip remains removed.
 
@@ -135,12 +136,14 @@ remain unsupported. OutSim and InSim must both supply matching, fresh data.
 
 ## Control panel and gadget grid
 
-The **Gadgets** tab presents Radar, Gap ahead, Gap behind, and Performance delta
+The **Gadgets** tab presents Radar, Speed dashboard, Gap ahead, Gap behind,
+Performance delta, and Fuel
 cards in insertion order. Cards fill each row from left to right, wrap to the left of the next row
 when another card cannot fit, and reflow when the window is resized. Narrow
 windows use one column; extra rows are vertically scrollable. The panel opens
-with space for all four cards and fits its height to the rendered controls,
-within the monitor's available size. You can resize it afterward.
+with space for the cards and fits its height to the rendered controls,
+within the monitor's available size. The initial width is fitted before the
+window appears. You can resize it afterward.
 
 The header keeps **Apply / reconnect**, **Save settings**, **Quit**, and connection
 status visible on either tab, including when the content is scrolled. Apply is
@@ -155,7 +158,7 @@ display delay. The default is 60 ms; 0 ms uses the latest time shared by MCI
 and OutSim. It does not predict future positions. Click **Apply / reconnect**
 after changing interpolation in live mode.
 
-Radar, Gap ahead, and Gap behind each have a separate transparent overlay window.
+Each gadget has a separate transparent overlay window.
 Enable the gap gadgets from their cards, turn on each card's **Position mode**,
 and drag that gadget's title bar anywhere on the desktop. Turn Position mode off
 to restore its borderless, mouse click-through display. Each gap also has screen
@@ -165,6 +168,9 @@ Existing TOML files retain their radar settings and default to radar enabled,
 with both new gap gadgets disabled. Earlier normalized gap X/Y values are
 migrated to screen coordinates; future saves use `window_x` and `window_y` in
 logical screen pixels. Fresh gap windows start to the right of the radar.
+When a gadget window first opens, its size and position are fitted to a connected
+monitor. Off-screen saved positions return to the primary monitor; valid positions
+on secondary monitors, including negative X/Y, are retained.
 
 **Show overlays** controls all windows, and each card's Enabled setting controls
 its own gadget. Closing a gadget window in Position mode disables that gadget.
@@ -401,3 +407,44 @@ tests/                 Protocol, geometry, and socket integration checks
 Research and remaining acceptance criteria:
 [docs/proximity-radar-plan.md](proximity-radar-plan.md). Future product scope:
 [docs/roadmap.md](roadmap.md).
+
+## Fuel
+
+Enable **Fuel** in Gadgets and [configure OutGauge](configuration.md#speed-dashboard).
+The independent window follows the supplied Fuel design, with the same background
+as Speed dashboard. Its card provides position, scale, and status. Current fuel
+is shown as tank percentage.
+
+**LAPS UNTIL EMPTY** uses the average fuel consumed per complete usable lap.
+The signed number beside it subtracts the estimated race distance remaining:
+**12.9** fuel laps with **20.6** laps remaining gives **−7.7**, meaning you need
+enough additional fuel for about 7.7 laps. A positive margin means a surplus.
+
+The table uses up to the five most recent usable full laps:
+
+| Field | Meaning |
+| --- | --- |
+| USAGE | Tank percentage consumed per lap: AVG mean, MAX highest, MIN lowest positive consumption. |
+| LAPS | Current fuel divided by that row's consumption. |
+| REFUEL | Additional tank percentage needed to finish using that row's consumption, rounded upward to a whole percent. |
+
+REFUEL is the amount to **add**. An asterisk means the additional amount exceeds
+the current tank space, so it requires multiple stops. The pump badge uses the
+AVG laps until empty: green above 2 laps, yellow above 1 through 2 laps, and red
+at 1 lap or less (refuel this lap). It stays grey while the range is unavailable;
+an empty tank is red immediately. The signed race shortfall is shown separately.
+
+Live percentage appears before calibration. Usage and range stay **—** until
+two finish-line readings span a full usable lap; the partial lap after connecting
+is discarded. Pit/refuel laps, resets, stale samples, and discontinuous progress
+are excluded. Refuelling retains completed consumption history for the same car
+and session. Changing cars, starting a new race, or reconnecting starts learning
+again. Pausing temporarily preserves completed history for the same car.
+
+Range learning requires a standard circuit. Finish margin and REFUEL are
+available for lap-count races; practice and timed races leave them unavailable.
+The initial estimate covers the selected driver's full configured distance. It
+can overestimate a lapped driver's requirement if their race ends after the
+leader finishes. Estimates depend on changing pace and approximate path-node
+progress; live LFS precision and start/finish conventions still need driving
+validation. Stale fuel is withheld rather than presented as current.

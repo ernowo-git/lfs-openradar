@@ -29,12 +29,18 @@ impl DashboardTelemetry {
             self.local_lights = Some((player.plid, player.model.clone(), headlights, now));
         }
     }
-    pub fn receive(&mut self, sample: Sample, now: u64, player: Option<&Player>, stale_ms: u64) {
+    pub fn receive(
+        &mut self,
+        sample: Sample,
+        now: u64,
+        player: Option<&Player>,
+        stale_ms: u64,
+    ) -> bool {
         let Some(player) = player else {
-            return;
+            return false;
         };
         if sample.plid == 0 || sample.plid != player.plid || sample.car != player.model {
-            return;
+            return false;
         }
         if let Some((old, received)) = &self.latest
             && old.plid == sample.plid
@@ -42,9 +48,10 @@ impl DashboardTelemetry {
             && now.saturating_sub(*received) <= stale_ms
             && (sample.time_ms.wrapping_sub(old.time_ms) as i32) <= 0
         {
-            return;
+            return false;
         }
         self.latest = Some((sample, now));
+        true
     }
     pub fn frame(&self, now: u64, config: &Config, player: Option<&Player>) -> DashboardFrame {
         let mut frame = DashboardFrame::default();
@@ -71,7 +78,7 @@ impl DashboardTelemetry {
                 {
                     frame.headlight_switch = Some(*headlights);
                 }
-                frame.status = if config.cars.contains_key(&sample.car) {
+                frame.status = if config.cars.get(&sample.car).is_some_and(|p| p.max_rpm > 0) {
                     "OutGauge connected".into()
                 } else {
                     "Set this car's RPM limit to enable the RPM bar".into()

@@ -18,25 +18,31 @@ use support::*;
 
 #[test]
 fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
-    mock_lfs(false, false, 9);
+    mock_lfs(false, false, 9, false);
 }
 
 #[test]
 fn mock_lfs_follows_viewed_ai_and_missing_outsim_pauses() {
-    mock_lfs(true, false, 9);
+    mock_lfs(true, false, 9, false);
 }
 
 #[test]
 fn mock_lfs_shared_outsim_outgauge_port_updates_both_gadgets() {
-    mock_lfs(true, true, 10);
+    mock_lfs(true, true, 10, false);
 }
 
 #[test]
 fn mock_lfs_reads_local_low_beam_when_outgauge_has_no_dipped_symbol() {
-    mock_lfs(false, false, 10);
+    mock_lfs(false, false, 10, false);
 }
 
-fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
+#[test]
+fn mock_lfs_fuel_only_receives_outgauge_on_separate_and_shared_ports() {
+    mock_lfs(false, false, 9, true);
+    mock_lfs(true, true, 10, true);
+}
+
+fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let udp_reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
     let gauge_reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -48,6 +54,10 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
         },
         outgauge_id: if shared { 1 } else { 24602 },
         speed_dashboard: GapSettings {
+            enabled: !fuel_only,
+            ..Default::default()
+        },
+        fuel: GapSettings {
             enabled: true,
             ..Default::default()
         },
@@ -151,6 +161,7 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
                 gauge[11] = if follow { 2 } else { 1 };
                 gauge[12..16].copy_from_slice(&20_f32.to_le_bytes());
                 gauge[16..20].copy_from_slice(&6400_f32.to_le_bytes());
+                gauge[28..32].copy_from_slice(&0.14_f32.to_le_bytes());
                 gauge[40..44].copy_from_slice(&outgauge::ENGINE.to_le_bytes());
                 gauge[44..48]
                     .copy_from_slice(&(outgauge::ENGINE | outgauge::ENGINE_SEVERE).to_le_bytes());
@@ -184,8 +195,10 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
     let start = Instant::now();
     while (!overlay_reader.snapshot().frame.live
         || overlay_reader.snapshot().dashboard.sample.is_none()
+        || overlay_reader.snapshot().fuel.fraction.is_none()
         || (protocol == 10
             && !follow
+            && !fuel_only
             && overlay_reader.snapshot().dashboard.headlight_switch != Some(2)))
         && start.elapsed() < Duration::from_secs(3)
     {
@@ -201,7 +214,7 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
     assert_eq!(live.dashboard.abs_enabled, Some(true));
     assert_eq!(
         live.dashboard.headlight_switch,
-        if protocol == 10 && !follow {
+        if protocol == 10 && !follow && !fuel_only {
             Some(2)
         } else {
             None
@@ -209,6 +222,7 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
     );
     assert_eq!(dashboard.gear_label(), "5");
     assert_eq!(dashboard.rpm, 6400.0);
+    assert!((live.fuel.fraction.unwrap() - 0.14).abs() < 0.00001);
     assert_ne!(dashboard.lights & outgauge::ENGINE_SEVERE, 0);
     assert_eq!(live.frame.cars.len(), 1);
     assert_eq!(live.version, "0.7G");
@@ -233,9 +247,14 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8) {
         paused.dashboard.sample.is_some(),
         "dashboard does not depend on OutSim"
     );
+    assert!(
+        paused.fuel.fraction.is_some(),
+        "fuel does not depend on OutSim"
+    );
     gauge_enabled.store(false, Ordering::Relaxed);
     thread::sleep(Duration::from_millis(200));
     assert!(overlay_reader.snapshot().dashboard.sample.is_none());
+    assert!(overlay_reader.snapshot().fuel.fraction.is_none());
     assert!(
         overlay_reader
             .snapshot()

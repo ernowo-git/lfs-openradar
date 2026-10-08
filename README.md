@@ -1,7 +1,8 @@
 # lfs-openradar
 
 OpenRadar is a standalone overlay for Live for Speed with a proximity radar,
-a speed and indicator dashboard, estimated gaps to the cars ahead and behind,
+a speed and indicator dashboard, fuel range and refuelling estimates,
+estimated gaps to the cars ahead and behind,
 and a real-time performance delta
 against your best clean lap in the current session. Each gadget has its own
 window, position, scale, and visibility settings.
@@ -25,6 +26,7 @@ Live preview. Yes, we need more pixels.
 
 - Proximity radar
 - [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
+- [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)
 - Real-time gap ahead/behind indicator
 - Lap performance delta
 
@@ -63,6 +65,17 @@ downloads; unchanged versions skip publication. See
 
 ## License
 
-OpenRadar is licensed under the [MIT License](LICENSE). The vendored eframe patch
-includes its own [MIT license](vendor/eframe/LICENSE-MIT) and
-[patch documentation](vendor/eframe/OPENRADAR-PATCH.md).
+Copyright (c) 2026 ernowo-git.
+
+OpenRadar is free software licensed under the
+[GNU General Public License v3.0 only](LICENSE) (`GPL-3.0-only`). You may
+redistribute and modify it under GPL v3. Distributed modified versions must
+provide their corresponding source code under GPL v3. The software comes
+without any warranty; see the license for the full terms.
+
+Earlier versions published under MIT retain their original MIT permissions.
+
+Third-party components retain their own licenses. The vendored eframe patch
+includes its [MIT license](vendor/eframe/LICENSE-MIT) and
+[patch documentation](vendor/eframe/OPENRADAR-PATCH.md). Bundled fonts use the
+[SIL Open Font License 1.1](docs/font-licenses.md).

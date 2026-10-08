@@ -18,3 +18,11 @@ rerendering every frame.
 | headlights-off.svg | light_off.svg |
 | headlights-on.svg | light_low.svg |
 | headlights-highbeam.svg | light_high.svg |
+
+`fuel-pump.svg` contains the white pump path extracted from the user-supplied
+`Downloads/Frame 13.svg` Fuel design. Its original coordinates are preserved.
+It supplies the neutral badge while the range estimate is unavailable.
+
+`fuel-safe.svg`, `fuel-warning.svg`, and `fuel-danger.svg` are copied unchanged
+from `Downloads/fuel_indicator`. Their green, yellow, and red circles indicate
+more than 2, more than 1 through 2, and at most 1 estimated fuel laps remaining.

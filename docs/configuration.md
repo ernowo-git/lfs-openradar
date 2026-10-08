@@ -232,3 +232,27 @@ For connection diagnostics, run OpenRadar with `--headless --seconds 10`
 (using the same `--config` path as the desktop app). With Speed dashboard enabled,
 this prints its status, latest sample, age, and any OutGauge errors. Close the
 desktop app first so the diagnostic process can bind the telemetry socket.
+
+## Fuel
+
+Enable **Fuel** in Gadgets after configuring [OutGauge](#speed-dashboard). Fuel
+uses the same receiver as Speed dashboard and works with that gadget disabled,
+or with OutSim unavailable. InSim supplies the selected car and race progress.
+It follows your own car in multiplayer or the watched car in supported live
+single-player follow mode. Enabling/disabling Fuel reconnects the worker.
+
+~~~toml
+[fuel]
+enabled = true
+window_x = 376.0
+window_y = 746.0
+scale = 1.0
+~~~
+
+The Fuel card provides Position mode, X/Y, and scale. Fuel is shown as tank
+percentage; no tank-capacity setting is needed. Old `fuel_tank_litres` entries
+are accepted for compatibility and removed when settings are saved.
+
+Fuel defaults to disabled in older configurations. It shares the dashboard's
+#252525 body at 40% opacity and retains its supplied design in either HUD style.
+See [Fuel usage](usage.md#fuel) for the range, margin, and REFUEL meanings.

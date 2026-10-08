@@ -152,3 +152,11 @@ jobs:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
         shell: bash
         run: python .github/scripts/release.py publish --version "$RELEASE_VERSION" --commit "$GITHUB_SHA"
+
+  cleanup:
+    name: Keep the latest three releases
+    needs: publish
+    permissions:
+      contents: write
+    # Releases published with GITHUB_TOKEN do not trigger release workflows.
+    uses: ./.github/workflows/cleanup-releases.yml

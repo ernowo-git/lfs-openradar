@@ -109,6 +109,18 @@ fn run() -> Result<(), String> {
                         eprintln!("outgauge: {error}");
                     }
                 }
+                if config.fuel.enabled {
+                    println!(
+                        "Fuel: {} | range={:?} laps margin={:?} laps refuel={:?}%",
+                        snapshot.fuel.status,
+                        snapshot.fuel.rows[0].laps,
+                        snapshot.fuel.margin,
+                        snapshot.fuel.rows[0].refuel.map(|value| value * 100.0)
+                    );
+                    if let Some(error) = &snapshot.outgauge_error {
+                        eprintln!("outgauge: {error}");
+                    }
+                }
                 if let Some(error) = &snapshot.error {
                     eprintln!("{error}");
                 }

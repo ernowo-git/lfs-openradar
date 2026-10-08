@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 publish = false
-license = "MIT"
+license = "GPL-3.0-only"
 description = "LFS proximity radar using InSim/MCI and required OutSim telemetry"
 
 [dependencies]
