@@ -11,10 +11,9 @@ can use it in multiplayer without the server's admin password. Windows is the
 primary platform; Linux/X11 support is experimental.
 
 > [!NOTE]
-> This project's development relies heavily on AI assistance for the codebase.
-> AI tools are used strictly behind the scenes to make the development workflow
-> more efficient. I have a love-hate relationship with LLMs, but they help move
-> development forward so I can spend more time racing with what LLM is building.
+> I’m building this project with plenty of AI help behind the scenes.
+> I have mixed feelings about LLMs, but they help me keep development moving
+> and spend more time racing.
 
 ## Quick preview
 
@@ -142,12 +141,34 @@ OutSim Opts 1ff
 See [LFS startup setup](docs/lfs-startup-setup.md) for backups and port conflicts,
 or [troubleshooting](docs/troubleshooting.md) if the overlay stays paused.
 
-### Build from source
+## Development
 
 Use Rust 1.88 or newer and keep the checked-in Cargo.lock and `vendor/eframe`
 directory. Windows needs Visual Studio C++ Build Tools and a Windows SDK.
-Linux needs a C/C++ compiler, pkg-config, and X11/Wayland development libraries;
-the [CI workflow](.github/workflows/ci.yml) lists the Ubuntu dependencies.
+
+### Linux
+
+<details>
+<summary>Ubuntu/Debian</summary>
+
+Install the native development dependencies before building:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential pkg-config \
+  libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+  libgl1-mesa-dev libegl1-mesa-dev libudev-dev
+```
+
+`build-essential` provides the C/C++ compiler and build tools. The remaining
+packages provide the native libraries needed by the desktop app. These match
+the Ubuntu build dependencies in the [CI workflow](.github/workflows/ci.yml).
+
+</details>
+
+### Build from source
 
 ```text
 cargo build --release --locked
