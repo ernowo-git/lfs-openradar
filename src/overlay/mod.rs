@@ -22,6 +22,8 @@ mod radar_style;
 #[cfg(feature = "desktop")]
 mod render;
 #[cfg(feature = "desktop")]
+mod speed_dashboard;
+#[cfg(feature = "desktop")]
 mod theme;
 #[cfg(feature = "desktop")]
 mod window;

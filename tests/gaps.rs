@@ -43,6 +43,7 @@ fn players() -> BTreeMap<u8, Player> {
                     kind: if id == 1 { 0 } else { 6 },
                     name: format!("Driver {id}"),
                     model: "XRG".into(),
+                    abs_enabled: false,
                     in_garage: false,
                 },
             )

@@ -32,6 +32,7 @@ impl Default for Demo {
                         kind,
                         name: name.into(),
                         model: "XRG".into(),
+                        abs_enabled: true,
                         in_garage: false,
                     }),
                     0,
@@ -163,6 +164,27 @@ impl Demo {
         Snapshot {
             delta: self.engine.delta(now, config, &frame),
             gaps: self.engine.gaps(now, config, &frame),
+            dashboard: crate::dashboard::DashboardFrame {
+                sample: Some(crate::lfs::outgauge::Sample {
+                    time_ms: now as u32,
+                    car: "DEMO".into(),
+                    plid: 1,
+                    kmh: true,
+                    gear: 6,
+                    speed_mps: 248.0 / 3.6,
+                    rpm: 6400.0,
+                    available: crate::lfs::outgauge::ABS
+                        | crate::lfs::outgauge::TC
+                        | crate::lfs::outgauge::ENGINE
+                        | crate::lfs::outgauge::HEADLIGHTS,
+                    lights: crate::lfs::outgauge::ABS | crate::lfs::outgauge::ENGINE,
+                }),
+                car: Some("DEMO".into()),
+                abs_enabled: Some(true),
+                headlight_switch: None,
+                age_ms: Some(0),
+                status: "Synthetic dashboard preview".into(),
+            },
             connected: true,
             version: "synthetic".into(),
             frame,

@@ -16,6 +16,7 @@ fn driver(id: u8) -> Player {
         kind: 2,
         name: format!("AI {id}"),
         model: "XRG".into(),
+        abs_enabled: false,
         in_garage: false,
     }
 }

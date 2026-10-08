@@ -8,6 +8,7 @@ pub const ISS_PAUSED: u16 = 4;
 pub const ISS_SHIFTU: u16 = 8;
 pub const ISS_FRONT_END: u16 = 256;
 pub const ISS_MULTI: u16 = 512;
+pub const SETF_ABS_ENABLE: u8 = 4;
 
 #[derive(Clone, Debug)]
 pub struct Car {
@@ -28,6 +29,7 @@ pub struct Player {
     pub name: String,
     pub model: String,
     pub in_garage: bool,
+    pub abs_enabled: bool,
 }
 impl Player {
     pub fn local_human(&self) -> bool {
@@ -62,6 +64,10 @@ pub enum Packet {
         protocol: u8,
     },
     Tiny(u8),
+    LocalLights {
+        request: u8,
+        headlights: u8,
+    },
     State(State),
     Player(Player),
     /// Reply to a roster request, rather than a car joining or re-entering.
@@ -117,6 +123,19 @@ impl Framer {
         Ok(result)
     }
 }
+/// Built-in three-letter codes or a vehicle mod's 24-bit skin identifier.
+pub fn car_name(bytes: &[u8]) -> String {
+    let code = text(bytes);
+    if "UF1 XFG XRG XRT LX4 LX6 RB4 FXO FZ5 RAC MRT UFR XFR FXR XRR FZR FOX FO8 BF1 FBM"
+        .split_whitespace()
+        .any(|stock| stock == code)
+    {
+        code
+    } else {
+        format!("{:06X}", u32_at(bytes, 0) & 0x00ffffff)
+    }
+}
+
 pub fn tiny(subtype: u8, request: u8) -> [u8; 4] {
     [1, 3, request, subtype]
 }
@@ -158,6 +177,17 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
             exact(4)?;
             Packet::Tiny(p[3])
         }
+        4 => {
+            exact(8)?;
+            if p[3] == 10 {
+                Packet::LocalLights {
+                    request: p[2],
+                    headlights: ((u32_at(p, 4) >> 18) & 3) as u8,
+                }
+            } else {
+                Packet::Other
+            }
+        }
         5 => {
             exact(28)?;
             Packet::State(State {
@@ -195,8 +225,9 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                 ucid: p[4],
                 kind: p[5],
                 name: plain_driver_name(&text(&p[8..32])),
-                model: text(&p[40..44]),
+                model: car_name(&p[40..44]),
                 in_garage: false,
+                abs_enabled: p[72] & SETF_ABS_ENABLE != 0,
             };
             if p[2] != 0 {
                 Packet::PlayerSnapshot(player)

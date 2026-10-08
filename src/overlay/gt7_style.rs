@@ -16,7 +16,7 @@ const MUTED: Color32 = Color32::from_rgb(216, 221, 248);
 const BACKDROP: Color32 = Color32::TRANSPARENT;
 /// Grey-black cell backing at 30% opacity (77 / 255).
 const CELL_BACKGROUND: Color32 = Color32::from_rgba_unmultiplied_const(24, 24, 24, 77);
-const GAIN_TEXT: Color32 = Color32::from_rgb(112, 189, 255);
+pub(super) const GAIN_TEXT: Color32 = Color32::from_rgb(112, 189, 255);
 const LOSS_TEXT: Color32 = Color32::from_rgb(255, 134, 145);
 const BLUE: Color32 = Color32::from_rgb(20, 98, 210);
 const RED: Color32 = Color32::from_rgb(223, 20, 45);

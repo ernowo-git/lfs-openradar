@@ -299,9 +299,6 @@ pub fn prepare_outsim(directory: &Path, config: &Config) -> Result<OutSimPlan, S
 }
 
 fn update_outsim_cfg(bytes: &[u8], config: &Config) -> Result<Vec<u8>, String> {
-    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
-        return Err("Use an ANSI or UTF-8 cfg.txt; UTF-16 files cannot be updated".into());
-    }
     let settings = [
         (b"Mode".as_slice(), "1".to_string()),
         (b"Delay".as_slice(), "2".to_string()),
@@ -310,12 +307,45 @@ fn update_outsim_cfg(bytes: &[u8], config: &Config) -> Result<Vec<u8>, String> {
         (b"ID".as_slice(), config.outsim_id.to_string()),
         (b"Opts".as_slice(), format!("{:x}", config.outsim_options)),
     ];
+    update_telemetry_cfg(bytes, b"OutSim", &settings)
+}
+
+pub fn prepare_outgauge(directory: &Path, config: &Config) -> Result<OutSimPlan, String> {
+    config.validate()?;
+    if !config.outgauge_bind.is_ipv4() {
+        return Err("OutGauge setup requires an IPv4 loopback endpoint".into());
+    }
+    let cfg_path = installation_root(directory)?.join("cfg.txt");
+    let original = read_cfg(&cfg_path)?;
+    let settings = [
+        (b"Mode".as_slice(), "1".to_string()),
+        (b"Delay".as_slice(), "2".to_string()),
+        (b"IP".as_slice(), config.outgauge_bind.ip().to_string()),
+        (b"Port".as_slice(), config.outgauge_bind.port().to_string()),
+        (b"ID".as_slice(), config.outgauge_id.to_string()),
+    ];
+    let replacement = update_telemetry_cfg(&original, b"OutGauge", &settings)?;
+    Ok(OutSimPlan {
+        cfg_path,
+        original,
+        replacement,
+    })
+}
+
+fn update_telemetry_cfg(
+    bytes: &[u8],
+    protocol: &[u8],
+    settings: &[(&[u8], String)],
+) -> Result<Vec<u8>, String> {
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        return Err("Use an ANSI or UTF-8 cfg.txt; UTF-16 files cannot be updated".into());
+    }
     let bom = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
         3
     } else {
         0
     };
-    let mut seen = [false; 6];
+    let mut seen = vec![false; settings.len()];
     let mut updated = bytes[..bom].to_vec();
     for line in bytes[bom..].split_inclusive(|b| *b == b'\n') {
         // Match two complete key tokens, retaining indentation, separators, and
@@ -333,7 +363,7 @@ fn update_outsim_cfg(bytes: &[u8], config: &Config) -> Result<Vec<u8>, String> {
         };
         let prefix = token();
         let key = token();
-        if prefix.eq_ignore_ascii_case(b"OutSim")
+        if prefix.eq_ignore_ascii_case(protocol)
             && let Some(index) = settings
                 .iter()
                 .position(|(name, _)| key.eq_ignore_ascii_case(name))
@@ -380,7 +410,8 @@ fn update_outsim_cfg(bytes: &[u8], config: &Config) -> Result<Vec<u8>, String> {
             if updated.len() > bom && !updated.ends_with(b"\n") {
                 updated.extend_from_slice(newline);
             }
-            updated.extend_from_slice(b"OutSim ");
+            updated.extend_from_slice(protocol);
+            updated.push(b' ');
             updated.extend_from_slice(key);
             updated.push(b' ');
             updated.extend_from_slice(value.as_bytes());

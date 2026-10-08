@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::Path};
+use std::{collections::BTreeMap, net::SocketAddr, path::Path};
 
 /// Built-in overlay appearance, independent of the desktop renderer.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -47,6 +47,13 @@ impl Default for GapSettings {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CarProfile {
+    pub name: String,
+    pub max_rpm: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub insim_address: SocketAddr,
@@ -54,6 +61,15 @@ pub struct Config {
     /// Folder containing the user's LFS.exe; only the setup button edits LFS.
     pub lfs_directory: String,
     pub outsim_bind: SocketAddr,
+    pub outgauge_bind: SocketAddr,
+    /// Zero selects the 92-byte OutGauge packet without an ID.
+    pub outgauge_id: i32,
+    pub cars: BTreeMap<String, CarProfile>,
+    pub speed_dashboard: GapSettings,
+    /// Percentage of the configured RPM limit that starts the red/blue blink.
+    pub rpm_blink_threshold_percent: u8,
+    /// Time each RPM blink color is shown, in milliseconds.
+    pub rpm_blink_interval_ms: u16,
     /// Zero selects the legacy layout; otherwise OutSim Opts bitmask.
     pub outsim_options: u16,
     /// Zero disables ID validation and selects a legacy packet without an ID.
@@ -102,6 +118,18 @@ impl Default for Config {
             insim_password: InSimPassword::default(),
             lfs_directory: String::new(),
             outsim_bind: "127.0.0.1:30000".parse().unwrap(),
+            outgauge_bind: "127.0.0.1:30001".parse().unwrap(),
+            outgauge_id: 24602,
+            cars: BTreeMap::from([(
+                "XFG".into(),
+                CarProfile {
+                    name: "XF GTI".into(),
+                    max_rpm: 8000,
+                },
+            )]),
+            speed_dashboard: GapSettings::default(),
+            rpm_blink_threshold_percent: 95,
+            rpm_blink_interval_ms: 100,
             outsim_options: 0x1ff,
             outsim_id: 24601,
             mci_interval_ms: 20,
@@ -201,6 +229,7 @@ impl Config {
             (&mut self.gap_ahead, 0.12, 0.0),
             (&mut self.gap_behind, 0.88, 100.0),
             (&mut self.performance_delta, 0.5, 200.0),
+            (&mut self.speed_dashboard, 0.5, 360.0),
         ] {
             let legacy = settings.legacy_x.is_some() || settings.legacy_y.is_some();
             settings.window_x.get_or_insert(if legacy {
@@ -220,9 +249,30 @@ impl Config {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=100).contains(&self.rpm_blink_threshold_percent) {
+            return Err("rpm_blink_threshold_percent must be 1..100".into());
+        }
+        if !(50..=500).contains(&self.rpm_blink_interval_ms) {
+            return Err("rpm_blink_interval_ms must be 50..500".into());
+        }
+        for (code, profile) in &self.cars {
+            if code.trim().is_empty() || profile.name.trim().is_empty() || profile.max_rpm == 0 {
+                return Err(
+                    "car profiles require a car code, a name, and a positive max_rpm".into(),
+                );
+            }
+        }
+        if !self.outgauge_bind.ip().is_loopback() || self.outgauge_bind.port() == 0 {
+            return Err("OutGauge requires a nonzero loopback UDP endpoint".into());
+        }
         self.overlay_toggle_key()?;
         crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
-        for settings in [&self.gap_ahead, &self.gap_behind, &self.performance_delta] {
+        for settings in [
+            &self.gap_ahead,
+            &self.gap_behind,
+            &self.performance_delta,
+            &self.speed_dashboard,
+        ] {
             if [settings.window_x, settings.window_y]
                 .iter()
                 .flatten()
@@ -260,6 +310,17 @@ impl Config {
             || (self.outsim_options != 0 && self.outsim_id != 0 && self.outsim_options & 2 == 0)
         {
             return Err("OutSim options must include TIME and MAIN, or be zero for legacy".into());
+        }
+        if self.speed_dashboard.enabled
+            && self.outgauge_bind == self.outsim_bind
+            && matches!(
+                crate::lfs::outsim::packet_size(self.outsim_options, self.expected_outsim_id())?,
+                92 | 96
+            )
+        {
+            return Err(
+                "OutGauge needs a separate port when OutSim packets are 92 or 96 bytes".into(),
+            );
         }
         if !self.side_m.is_finite() || !(0.0..=100.0).contains(&self.side_m) {
             return Err("Radar side range must be finite and 0..100 metres".into());

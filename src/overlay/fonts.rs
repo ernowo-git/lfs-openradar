@@ -1,9 +1,10 @@
-//! Embedded fonts used only by the GT7-inspired HUD families.
+//! Embedded fonts used by GT7-inspired HUD families and the speed dashboard.
 
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
 
 pub(super) const BODY: &str = "gt7-body";
 pub(super) const DISPLAY: &str = "gt7-display";
+pub(super) const NUMERIC: &str = "dashboard-numeric";
 
 pub(super) fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
@@ -16,6 +17,10 @@ pub(super) fn install(ctx: &egui::Context) {
         (
             DISPLAY,
             include_bytes!("../../assets/fonts/Orbitron.ttf").as_slice(),
+        ),
+        (
+            NUMERIC,
+            include_bytes!("../../assets/fonts/AzeretMono-Bold.ttf").as_slice(),
         ),
     ] {
         fonts

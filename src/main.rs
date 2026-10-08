@@ -97,6 +97,18 @@ fn run() -> Result<(), String> {
                     snapshot.gaps.ahead.seconds,
                     snapshot.gaps.behind.seconds
                 );
+                if config.speed_dashboard.enabled {
+                    println!(
+                        "Dashboard: {} | sample={:?} age={:?}ms headlights={:?}",
+                        snapshot.dashboard.status,
+                        snapshot.dashboard.sample,
+                        snapshot.dashboard.age_ms,
+                        snapshot.dashboard.headlight_switch
+                    );
+                    if let Some(error) = &snapshot.outgauge_error {
+                        eprintln!("outgauge: {error}");
+                    }
+                }
                 if let Some(error) = &snapshot.error {
                     eprintln!("{error}");
                 }

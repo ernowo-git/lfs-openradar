@@ -1,11 +1,12 @@
 # lfs-openradar
 
 OpenRadar is a standalone overlay for Live for Speed with a proximity radar,
-estimated gaps to the cars ahead and behind, and a real-time performance delta
+a speed and indicator dashboard, estimated gaps to the cars ahead and behind,
+and a real-time performance delta
 against your best clean lap in the current session. Each gadget has its own
 window, position, scale, and visibility settings.
 
-It connects to your local LFS client through InSim and OutSim. Regular players
+It connects to your local LFS client through InSim, OutSim, and OutGauge. Regular players
 can use it in multiplayer without the server's admin password. Windows is the
 primary platform; Linux/X11 support is experimental.
 
@@ -24,6 +25,7 @@ Live preview. Yes, we need more pixels.
 ## Features
 
 - Proximity radar
+- [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
 - Real-time gap ahead/behind indicator
 - Lap performance delta
 
@@ -133,6 +135,9 @@ OutSim Opts 1ff
    **InSim password** field and click **Apply / reconnect**. Saving settings
    stores the password as plain text in your TOML file.
 4. Drive your own car and confirm both telemetry sources are updating.
+5. For **Speed dashboard**, close LFS and click **Configure OutGauge**. Enable
+   the gadget, restart LFS, and set the car’s **Max RPM**. See the
+   [dashboard configuration](docs/configuration.md#speed-dashboard).
 
 See [LFS startup setup](docs/lfs-startup-setup.md) for backups and port conflicts,
 or [troubleshooting](docs/troubleshooting.md) if the overlay stays paused.

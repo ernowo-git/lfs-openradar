@@ -4,6 +4,7 @@
 //! back to MCI-only orientation when OutSim is missing or stale.
 
 pub mod config;
+pub mod dashboard;
 pub mod delta;
 pub mod demo;
 pub mod gaps;

@@ -172,6 +172,10 @@ impl Engine {
         }
         (state.viewed == first.plid).then_some(first.plid)
     }
+    /// Uses the same view and local-player gating as the radar, without requiring OutSim.
+    pub fn dashboard_player(&self) -> Option<&Player> {
+        self.select_driver().and_then(|id| self.players.get(&id))
+    }
     fn inactive_status(&self) -> &'static str {
         let Some(state) = &self.state else {
             return "Waiting for LFS state and player roster";
