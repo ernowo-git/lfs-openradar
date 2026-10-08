@@ -41,8 +41,10 @@ either source; its standard packets are ignored if received on the OutSim port.
 2. With LFS closed, check its `cfg.txt` against the default settings below. Restart
    LFS after editing. Match the radar's `outsim_bind`, `outsim_id`, and
    `outsim_options` if using other values.
-3. Drive your own local human car in cockpit or custom view. Pause, replay,
-   spectating, free view, or ambiguous local driver selection pauses output.
+3. Drive your own local human car in cockpit or custom view, or enable
+   **Follow viewed car** and watch an AI in a live single-player session.
+   Click **Apply / reconnect** after changing the option. Pause, replay,
+   free view, or an unsupported camera pauses output.
 4. Watch the MCI/OutSim ages and counters. With defaults, telemetry becomes
    uncertain after 250 ms and pauses after 500 ms. Rising rejected/malformed
    counters suggest a packet layout, ID, or source mismatch.
@@ -65,12 +67,17 @@ OutSim packets. Addresses must be loopback addresses with nonzero ports.
 | `Waiting for local LFS InSim connection` | Confirm LFS is running, its local InSim listener is enabled, and the address/port match. Check any accompanying connection/password error. |
 | `Drive your local human car in cockpit or custom view` | No eligible local driver/view is selected. Return to your own car and an eligible camera. |
 | `Waiting for a complete MCI update` | InSim has not supplied a complete car update. Check connection state and whether cars are on track. |
-| `OutSim required — waiting for a matching local pose` | No accepted local pose is available. Check cfg.txt, destination port, options/layout, and ID. |
+| `OutSim required — waiting for a matching car pose` | No accepted pose for the selected car is available. Check cfg.txt, destination port, options/layout, and ID. |
 | `Telemetry stale — radar paused` | At least one source stopped updating. Compare the two ages to identify it. |
 | `Synchronizing MCI and OutSim` | The interpolation histories do not yet cover a common display time. A brief wait after joining/reconnecting is expected; persistent status needs ages/counters in the report. |
-| `Local car missing from MCI — radar paused` | The selected driver is absent from the current car set. Check joining, spectating, and takeover state. |
+| `Selected car missing from MCI — radar paused` | The selected driver is absent from the current car set. Check joining, spectating, and takeover state. |
 | `MCI / OutSim association mismatch — radar paused` | Sources disagree on the local pose. Ensure both come from the same local LFS instance and driver; report persistent mismatches rather than disabling validation. |
 | `MCI + OutSim connected` | Both sources passed the current gating. No nearby cars can still be a valid result. |
+| `Following NAME · MCI + OutSim connected` | Live single-player follow mode is active for NAME. |
+| `Waiting for a viewed car on track and its player roster` | Select an on-track AI/human in single player and wait for the roster. |
+| `Use cockpit or custom view to follow a car` | Switch out of free/TV/chase view to cockpit or custom view. |
+| `LFS paused — resume to follow the viewed car` | Resume the live session; an unfinished delta lap must restart at the finish line. |
+| `Replay unsupported — start a live single-player session` | Follow mode supports live single player only. |
 
 To inspect telemetry without initializing graphics, close the desktop radar first
 so it releases the UDP port, then run:

@@ -4,4 +4,5 @@
 //! monotonic arrival clock and keep raw protocol units at the decoder boundary.
 
 pub mod insim;
+pub mod outgauge;
 pub mod outsim;

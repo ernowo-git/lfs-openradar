@@ -36,7 +36,7 @@ fn car(progress: f64) -> Car {
 fn setup() -> DeltaEngine {
     let mut e = DeltaEngine::default();
     e.set_track(track());
-    e.select_driver(Some((1, "XRG".into())));
+    e.select_driver(Some((1, 1, "XRG".into())));
     e
 }
 fn race_setup() -> DeltaEngine {
@@ -217,6 +217,7 @@ fn timing_pipeline() -> lfs_openradar::radar::Engine {
                     kind: if id == 1 { 0 } else { 6 },
                     name: format!("Driver {id}"),
                     model: "XRG".into(),
+                    abs_enabled: false,
                     in_garage: false,
                 }),
                 0,
@@ -286,6 +287,7 @@ fn opponent_events_and_roster_replies_preserve_local_delta_and_neighbor_gaps() {
             kind: 0,
             name: "Driver 1".into(),
             model: "XRG".into(),
+            abs_enabled: false,
             in_garage: false,
         }),
     ] {
@@ -311,6 +313,7 @@ fn opponent_events_and_roster_replies_preserve_local_delta_and_neighbor_gaps() {
                     .packet(
                         Packet::Lap {
                             plid: 1,
+                            laps_done: 1,
                             time_ms: 4000,
                             penalty: 0,
                         },
@@ -382,6 +385,7 @@ fn transient_pose_mismatch_or_missing_local_mci_recovers_without_restarting_the_
                     .packet(
                         Packet::Lap {
                             plid: 1,
+                            laps_done: 1,
                             time_ms: 4000,
                             penalty: 0,
                         },
@@ -440,6 +444,7 @@ fn local_resets_and_teleports_discard_recording_but_opponent_teleports_do_not() 
                     .packet(
                         Packet::Lap {
                             plid: 1,
+                            laps_done: 1,
                             time_ms: 4000,
                             penalty: 0,
                         },
@@ -540,6 +545,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
                 kind: 0,
                 name: "Driver".into(),
                 model: "XRG".into(),
+                abs_enabled: false,
                 in_garage: false,
             }),
             0,
@@ -586,6 +592,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
                 .packet(
                     Packet::Lap {
                         plid: 1,
+                        laps_done: 1,
                         time_ms: 4000,
                         penalty: 0,
                     },
@@ -642,6 +649,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                 kind: 0,
                 name: "Driver".into(),
                 model: "XRG".into(),
+                abs_enabled: false,
                 in_garage: false,
             }),
             0,
@@ -704,6 +712,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                 .packet(
                     Packet::Lap {
                         plid: 1,
+                        laps_done: 1,
                         time_ms: if progress == 40 { 5000 } else { 4000 },
                         penalty: 0,
                     },
@@ -824,10 +833,10 @@ fn stale_backwards_reset_and_car_or_track_change_are_safe() {
     e.reset_lap();
     assert_eq!(e.frame(end + 200, 250).best_seconds, Some(4.0));
     e.select_driver(None);
-    e.select_driver(Some((1, "XRG".into())));
+    e.select_driver(Some((1, 1, "XRG".into())));
     e.update(&car(81.0), end + 300);
     assert_eq!(e.frame(end + 300, 250).best_seconds, Some(4.0));
-    e.select_driver(Some((1, "XFG".into())));
+    e.select_driver(Some((1, 1, "XFG".into())));
     e.update(&car(81.0), end + 400);
     assert_eq!(e.frame(end + 400, 250).best_seconds, None);
     let mut info = track();
@@ -842,11 +851,13 @@ fn lap_and_validity_packets_validate_lengths_and_request_hlvc() {
     lap[1] = 24;
     lap[3] = 1;
     lap[4..8].copy_from_slice(&45678_u32.to_le_bytes());
+    lap[12..14].copy_from_slice(&1_u16.to_le_bytes());
     lap[17] = 2;
     assert!(matches!(
         insim::decode(&lap).unwrap(),
         Packet::Lap {
             plid: 1,
+            laps_done: 1,
             time_ms: 45678,
             penalty: 2
         }

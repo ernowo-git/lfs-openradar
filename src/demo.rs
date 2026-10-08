@@ -32,6 +32,7 @@ impl Default for Demo {
                         kind,
                         name: name.into(),
                         model: "XRG".into(),
+                        abs_enabled: true,
                         in_garage: false,
                     }),
                     0,
@@ -82,6 +83,7 @@ impl Demo {
                             plid: 1,
                             time_ms: 100_000,
                             penalty: 0,
+                            laps_done: (tick / 100_000) as u16,
                         },
                         tick,
                     )
@@ -163,7 +165,30 @@ impl Demo {
         Snapshot {
             delta: self.engine.delta(now, config, &frame),
             gaps: self.engine.gaps(now, config, &frame),
+            dashboard: crate::dashboard::DashboardFrame {
+                sample: Some(crate::lfs::outgauge::Sample {
+                    time_ms: now as u32,
+                    car: "DEMO".into(),
+                    plid: 1,
+                    kmh: true,
+                    gear: 6,
+                    speed_mps: 248.0 / 3.6,
+                    rpm: 6400.0,
+                    fuel: 0.14,
+                    available: crate::lfs::outgauge::ABS
+                        | crate::lfs::outgauge::TC
+                        | crate::lfs::outgauge::ENGINE
+                        | crate::lfs::outgauge::HEADLIGHTS,
+                    lights: crate::lfs::outgauge::ABS | crate::lfs::outgauge::ENGINE,
+                }),
+                car: Some("DEMO".into()),
+                abs_enabled: Some(true),
+                headlight_switch: None,
+                age_ms: Some(0),
+                status: "Synthetic dashboard preview".into(),
+            },
             connected: true,
+            fuel: fuel_preview(),
             version: "synthetic".into(),
             frame,
             mci_sets: self.engine.mci_sets,
@@ -172,4 +197,17 @@ impl Demo {
             ..Default::default()
         }
     }
+}
+
+/// Coherent synthetic example: 12.9 laps of fuel, 20.6 required, −7.7 margin.
+pub fn fuel_preview() -> crate::fuel::FuelFrame {
+    let mut frame = crate::fuel::FuelFrame {
+        car: Some("DEMO".into()),
+        fraction: Some(0.14),
+        low_fuel: Some(false),
+        status: "Synthetic fuel preview".into(),
+        ..Default::default()
+    };
+    frame.estimates([0.14 / 12.9, 0.016, 0.009], Some(20.6));
+    frame
 }

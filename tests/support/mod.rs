@@ -46,6 +46,7 @@ pub fn player(id: u8, kind: u8) -> Packet {
         kind,
         name: format!("Driver {id}"),
         model: "XRG".into(),
+        abs_enabled: false,
         in_garage: false,
     })
 }

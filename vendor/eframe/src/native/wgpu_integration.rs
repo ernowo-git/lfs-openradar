@@ -992,6 +992,25 @@ fn create_wgpu_window(
     builder: &ViewportBuilder,
     no_redirection_bitmap: bool,
 ) -> Result<Window, winit::error::OsError> {
+    // Fit before HWND/window creation, rather than correcting an oversized or
+    // off-screen window after its first frame. Use each monitor's own DPI scale.
+    let primary = event_loop.primary_monitor();
+    let monitors: Vec<_> = primary
+        .into_iter()
+        .chain(event_loop.available_monitors())
+        .filter_map(|monitor| {
+            let scale = egui_ctx.zoom_factor() as f64 * monitor.scale_factor();
+            let position = monitor.position().to_logical::<f32>(scale);
+            let size = monitor.size().to_logical::<f32>(scale);
+            (size.width > 0.0 && size.height > 0.0).then(|| {
+                egui::Rect::from_min_size(
+                    egui::pos2(position.x, position.y),
+                    egui::vec2(size.width, size.height),
+                )
+            })
+        })
+        .collect();
+    let builder = super::window_geometry::fit_to_monitors(builder.clone(), &monitors);
     let attributes = egui_winit::create_winit_window_attributes(egui_ctx, builder.clone());
     #[cfg(windows)]
     let attributes = {
@@ -1005,7 +1024,7 @@ fn create_wgpu_window(
     #[cfg(not(windows))]
     let _ = no_redirection_bitmap;
     let window = event_loop.create_window(attributes)?;
-    egui_winit::apply_viewport_builder_to_window(egui_ctx, &window, builder);
+    egui_winit::apply_viewport_builder_to_window(egui_ctx, &window, &builder);
     Ok(window)
 }
 

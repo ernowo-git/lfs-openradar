@@ -1,12 +1,32 @@
 //! Native desktop rendering, isolated from protocol decoding and geometry.
 #[cfg(feature = "desktop")]
+mod delta_style;
+#[cfg(feature = "desktop")]
 mod desktop;
 #[cfg(feature = "desktop")]
 mod folder_picker;
 #[cfg(feature = "desktop")]
+mod fonts;
+#[cfg(feature = "desktop")]
+mod fuel_style;
+#[cfg(feature = "desktop")]
+mod gadget_style;
+#[cfg(feature = "desktop")]
+mod gap_style;
+#[cfg(feature = "desktop")]
 mod graphics_log;
 #[cfg(feature = "desktop")]
+mod gt7_style;
+#[cfg(feature = "desktop")]
 mod hotkey;
+#[cfg(feature = "desktop")]
+mod radar_style;
+#[cfg(feature = "desktop")]
+mod render;
+#[cfg(feature = "desktop")]
+mod speed_dashboard;
+#[cfg(feature = "desktop")]
+mod theme;
 #[cfg(feature = "desktop")]
 mod window;
 #[cfg(feature = "desktop")]

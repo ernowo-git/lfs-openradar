@@ -6,6 +6,13 @@ insim_password = ""
 # This setting alone does not change LFS; use Enable InSim at startup in the panel.
 lfs_directory = ""
 outsim_bind = "127.0.0.1:30000"
+# Optional Speed dashboard and Fuel telemetry; both share this UDP endpoint.
+outgauge_bind = "127.0.0.1:30001"
+outgauge_id = 24602
+# RPM bar starts alternating red/blue at this percentage (1..100).
+rpm_blink_threshold_percent = 95
+# Time per blink color (50..500 ms); lower values blink faster.
+rpm_blink_interval_ms = 100
 # Decimal 511 = LFS OutSim Opts 1ff (hexadecimal), full LFST packet.
 outsim_options = 511
 outsim_id = 24601
@@ -22,11 +29,18 @@ car_length_m = 4.2
 overlay_x = 40.0
 overlay_y = 160.0
 overlay_size = 320.0
+# Built-in HUD appearance: "classic" or "gt7-inspired". Changes apply immediately.
+hud_style = "classic"
+# Show passage-history and estimate diagnostics in gap gadgets for either HUD style.
+hud_debug = false
 hide_when_background = true
 # Show overlays shortcut. Global on Windows; panel must have focus elsewhere.
 # Supported: Insert, Delete, Home, End, PageUp, PageDown, Space, Enter, Escape,
 # Tab, Backspace, F1..F24, A..Z, 0..9. Use "None" to disable. Restart after editing.
 overlay_toggle_key = "Insert"
+# Follow the watched AI/human in live single player (cockpit/custom view).
+# Multiplayer still requires your own human car. Replays are unsupported.
+follow_viewed_car = false
 radar_enabled = true
 
 # Each gap has its own overlay window. Positions are logical screen pixels.
@@ -47,3 +61,22 @@ enabled = false
 window_x = 376.0
 window_y = 360.0
 scale = 1.0
+
+# Independent speed/RPM/gear/indicator overlay.
+[speed_dashboard]
+enabled = false
+window_x = 376.0
+window_y = 520.0
+scale = 1.0
+
+# Independent fuel level, range, and additional fuel needed to finish.
+[fuel]
+enabled = false
+window_x = 376.0
+window_y = 746.0
+scale = 1.0
+
+# Car settings by LFS car code (or six-digit vehicle mod ID).
+[cars.XFG]
+name = "XF GTI"
+max_rpm = 8000

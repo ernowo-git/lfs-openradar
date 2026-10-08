@@ -2,6 +2,8 @@ mod app_icon;
 mod epi_integration;
 mod event_loop_context;
 pub mod run;
+#[cfg(feature = "wgpu")]
+mod window_geometry;
 
 /// File storage which can be used by native backends.
 #[cfg(feature = "persistence")]

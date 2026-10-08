@@ -3,7 +3,10 @@ use crate::{
     config::Config,
     gaps::{GapEngine, GapFrame},
     lfs::{
-        insim::{Car, MciAssembler, Packet, Player, State},
+        insim::{
+            Car, ISS_FRONT_END, ISS_GAME, ISS_MULTI, ISS_PAUSED, ISS_REPLAY, ISS_SHIFTU,
+            MciAssembler, Packet, Player, State,
+        },
         outsim::Sample,
     },
 };
@@ -79,11 +82,15 @@ struct TimedPose {
 }
 #[derive(Default)]
 pub struct Engine {
+    follow_viewed_car: bool,
     delta: crate::delta::DeltaEngine,
+    fuel: crate::fuel::FuelEngine,
     gaps: GapEngine,
     players: BTreeMap<u8, Player>,
     state: Option<State>,
     selected: Option<u8>,
+    /// Retained while paused or in another camera to protect the reference lifetime.
+    reference_target: Option<u8>,
     assembler: MciAssembler,
     snapshots: VecDeque<Snapshot>,
     poses: VecDeque<TimedPose>,
@@ -96,16 +103,26 @@ pub struct Engine {
     pub rejected_outsim: u64,
 }
 impl Engine {
+    pub fn new(follow_viewed_car: bool) -> Self {
+        Self {
+            follow_viewed_car,
+            ..Self::default()
+        }
+    }
     pub fn clear(&mut self) {
         self.delta.clear();
+        self.fuel.clear();
         self.delta_association = None;
         self.gaps.forget_track();
         self.players.clear();
         self.state = None;
         self.selected = None;
+        self.reference_target = None;
         self.clear_histories();
     }
     fn clear_histories(&mut self) {
+        self.fuel.suspend();
+        self.delta_association = None;
         self.gaps.clear();
         self.clear_radar_histories();
     }
@@ -116,42 +133,105 @@ impl Engine {
         self.outsim_clock = None;
         self.previous_threats.clear();
     }
-    fn forget_driver_history(&mut self, id: u8, reason: &str) {
-        if self.selected == Some(id) {
-            self.delta.reset_lap_with_reason(reason);
+    fn forget_driver_history(&mut self, id: u8, replace: bool, reason: &str) {
+        if self.reference_target == Some(id) {
+            if replace {
+                self.delta.reset_reference();
+                self.fuel.reset_history();
+            } else {
+                self.delta.reset_lap_with_reason(reason);
+            }
             self.clear_histories();
         } else {
             self.gaps.remove_driver(id);
             self.clear_radar_histories();
         }
     }
+    fn follows_view(&self) -> bool {
+        self.follow_viewed_car
+            && self
+                .state
+                .as_ref()
+                .is_some_and(|s| s.flags & ISS_MULTI == 0)
+    }
     fn select_driver(&self) -> Option<u8> {
+        let state = self.state.as_ref()?;
+        if !matches!(state.camera, 3 | 4)
+            || state.flags & ISS_GAME == 0
+            || state.flags & (ISS_REPLAY | ISS_PAUSED | ISS_SHIFTU | ISS_FRONT_END) != 0
+        {
+            return None;
+        }
+        if self.follows_view() {
+            return self
+                .players
+                .get(&state.viewed)
+                .filter(|p| p.plid != 0 && !p.in_garage && p.kind & 4 == 0)
+                .map(|p| p.plid);
+        }
         let mut humans = self.players.values().filter(|p| p.local_human());
         let first = humans.next()?;
         if humans.next().is_some() {
             return None;
         }
-        let state = self.state.as_ref()?;
-        (state.viewed == first.plid
-            && matches!(state.camera, 3 | 4)
-            && state.flags & 1 != 0
-            && state.flags & (2 | 4 | 8 | 256) == 0)
-            .then_some(first.plid)
+        (state.viewed == first.plid).then_some(first.plid)
+    }
+    /// Uses the same view and local-player gating as the radar, without requiring OutSim.
+    pub fn dashboard_player(&self) -> Option<&Player> {
+        self.select_driver().and_then(|id| self.players.get(&id))
+    }
+    fn inactive_status(&self) -> &'static str {
+        let Some(state) = &self.state else {
+            return "Waiting for LFS state and player roster";
+        };
+        if !self.follows_view() {
+            return "Drive your local human car in cockpit or custom view";
+        }
+        if state.flags & ISS_REPLAY != 0 {
+            "Replay unsupported — start a live single-player session"
+        } else if state.flags & ISS_PAUSED != 0 {
+            "LFS paused — resume to follow the viewed car"
+        } else if state.flags & (ISS_FRONT_END | ISS_GAME) != ISS_GAME {
+            "Start a live single-player session to follow a car"
+        } else if state.flags & ISS_SHIFTU != 0 || !matches!(state.camera, 3 | 4) {
+            "Use cockpit or custom view to follow a car"
+        } else {
+            "Waiting for a viewed car on track and its player roster"
+        }
     }
     pub fn packet(&mut self, packet: Packet, time: u64) -> Result<(), String> {
         match packet {
             Packet::State(state) => {
+                if self.state.as_ref().is_some_and(|old| {
+                    (self.follow_viewed_car
+                        && old.flags & ISS_MULTI == 0
+                        && state.flags & ISS_MULTI == 0
+                        && old.viewed != state.viewed)
+                        || (old.flags ^ state.flags) & ISS_MULTI != 0
+                }) {
+                    self.delta.reset_reference();
+                }
                 if !self.delta.track_matches(&state.track) {
                     self.delta.clear();
                 }
                 if !self.gaps.track_matches(&state.track) {
                     self.gaps.forget_track();
                 }
+                if !self.fuel.track_matches(&state.track) {
+                    self.fuel.forget_track();
+                }
                 if self.state.as_ref().is_some_and(|old| {
                     old.track != state.track
                         || old.viewed != state.viewed
                         || old.camera != state.camera
-                        || (old.flags ^ state.flags) & (1 | 2 | 4 | 8 | 256) != 0
+                        || (old.flags ^ state.flags)
+                            & (ISS_GAME
+                                | ISS_REPLAY
+                                | ISS_PAUSED
+                                | ISS_SHIFTU
+                                | ISS_FRONT_END
+                                | ISS_MULTI)
+                            != 0
                 }) {
                     self.delta.reset_lap();
                     self.clear_histories();
@@ -161,7 +241,11 @@ impl Engine {
             Packet::Player(player) => {
                 // NPL for an existing PLID means re-entry or car replacement.
                 if self.players.contains_key(&player.plid) {
-                    self.forget_driver_history(player.plid, "local car re-entered or was replaced");
+                    self.forget_driver_history(
+                        player.plid,
+                        true,
+                        "selected car re-entered or was replaced",
+                    );
                 }
                 self.players.insert(player.plid, player);
             }
@@ -173,18 +257,22 @@ impl Engine {
                         || old.kind != player.kind
                         || old.in_garage
                 }) {
-                    self.forget_driver_history(player.plid, "driver ownership or car changed");
+                    self.forget_driver_history(
+                        player.plid,
+                        true,
+                        "driver ownership or car changed",
+                    );
                 }
                 self.players.insert(player.plid, player);
             }
             Packet::Pit(id) => {
-                self.forget_driver_history(id, "local driver pitted");
+                self.forget_driver_history(id, true, "selected driver pitted");
                 if let Some(p) = self.players.get_mut(&id) {
                     p.in_garage = true;
                 }
             }
             Packet::Leave(id) => {
-                self.forget_driver_history(id, "local driver left the race");
+                self.forget_driver_history(id, true, "selected driver left the race");
                 self.players.remove(&id);
             }
             Packet::ConnectionLeft(id) => {
@@ -195,25 +283,48 @@ impl Engine {
                     .map(|p| p.plid)
                     .collect();
                 for plid in leaving {
-                    self.forget_driver_history(plid, "local connection left");
+                    self.forget_driver_history(plid, true, "selected connection left");
                 }
                 self.players.retain(|_, p| p.ucid != id);
             }
             Packet::Reset(id) => {
-                self.forget_driver_history(id, "local car reset");
+                self.forget_driver_history(id, false, "selected car reset");
             }
             Packet::Session => {
                 self.delta.reset_reference();
+                self.fuel.reset_history();
                 self.clear_histories();
             }
-            Packet::LayoutChanged => self.delta.reset_reference(),
+            Packet::LayoutChanged => {
+                self.delta.reset_reference();
+                self.fuel.forget_track();
+            }
             Packet::Lap {
                 plid,
                 time_ms,
                 penalty,
+                laps_done,
             } => {
                 if self.selected == Some(plid) {
                     self.delta.lap_report(time_ms, penalty, time);
+                    self.fuel
+                        .lap_report(laps_done, time, self.association_stale_ms);
+                }
+            }
+            Packet::PitStop(id) => {
+                if self.selected == Some(id) {
+                    self.delta.invalidate();
+                    self.fuel.invalidate_lap();
+                }
+            }
+            Packet::PitLane { plid, entered } => {
+                if self.selected == Some(plid) {
+                    self.fuel.pit_lane(entered);
+                }
+            }
+            Packet::Finished(id) => {
+                if self.selected == Some(id) {
+                    self.fuel.finish();
                 }
             }
             Packet::InvalidLap(id) => {
@@ -224,21 +335,17 @@ impl Engine {
             Packet::RaceStart { info, requested } => {
                 if !requested {
                     self.delta.reset_reference();
+                    self.fuel.reset_history();
                     self.clear_histories();
                 }
                 self.delta.set_track(info.clone());
+                self.fuel.set_track(info.clone());
                 self.gaps.set_track(info);
             }
             Packet::Takeover(id) => {
+                self.forget_driver_history(id, true, "driver ownership changed");
                 // Re-request roster before trusting ownership again.
-                if self.selected == Some(id) {
-                    self.delta.reset_reference();
-                    self.players.clear();
-                    self.clear_histories();
-                } else {
-                    self.forget_driver_history(id, "driver ownership changed");
-                    self.players.remove(&id);
-                }
+                self.players.remove(&id);
             }
             Packet::Camera(id) => {
                 if self.selected == Some(id) {
@@ -268,6 +375,7 @@ impl Engine {
                     if self.selected.is_some_and(|id| teleported.contains(&id)) {
                         self.delta
                             .reset_lap_with_reason("local car position jumped");
+                        self.fuel.invalidate_lap();
                     }
                     if !teleported.is_empty() {
                         // Each gap history validates its own car. An opponent
@@ -279,8 +387,7 @@ impl Engine {
                         .selected
                         .and_then(|id| cars.iter().find(|c| c.plid == id))
                     {
-                        // Opponents' pit/roster events clear radar histories, but
-                        // must not discard the local driver's recorded lap.
+                        self.fuel.update(car, time, self.association_stale_ms);
                         if self.delta_association.is_some_and(|pose| {
                             time.saturating_sub(pose.time) <= self.association_stale_ms
                                 && pose.pose.distance(car.pose) <= 12.0
@@ -292,6 +399,7 @@ impl Engine {
                         }
                     } else {
                         self.delta.suspend("Waiting for local track progress");
+                        self.fuel.invalidate_lap();
                     }
                     self.snapshots.push_back(Snapshot { time, cars });
                     while self.snapshots.len() > 64 {
@@ -306,17 +414,34 @@ impl Engine {
         self.delta.select_driver(
             selected
                 .and_then(|id| self.players.get(&id))
-                .map(|p| (p.ucid, p.model.clone())),
+                .map(|p| (p.plid, p.ucid, p.model.clone())),
         );
+        self.fuel.select_driver(
+            selected
+                .and_then(|id| self.players.get(&id))
+                .map(|p| (p.plid, p.ucid, p.model.clone())),
+        );
+        if selected.is_some() {
+            self.reference_target = selected;
+        }
         if self.selected != selected {
-            self.delta_association = None;
-            self.gaps.clear();
-            self.poses.clear();
-            self.outsim_clock = None;
-            self.previous_threats.clear();
+            self.clear_histories();
             self.selected = selected;
         }
         Ok(())
+    }
+    pub fn fuel_sample(
+        &mut self,
+        sample: &crate::lfs::outgauge::Sample,
+        now: u64,
+        config: &Config,
+    ) {
+        self.association_stale_ms = config.stale_ms;
+        self.fuel.receive(sample, now, config.stale_ms);
+    }
+    pub fn fuel(&self, now: u64, config: &Config) -> crate::fuel::FuelFrame {
+        self.fuel
+            .frame(now, config, self.dashboard_player().is_some())
     }
     pub fn outsim(&mut self, sample: Sample, time: u64, config: &Config) {
         self.association_stale_ms = config.stale_ms;
@@ -418,6 +543,7 @@ impl Engine {
             ..Default::default()
         };
         let Some(id) = self.selected else {
+            frame.status = self.inactive_status().into();
             return frame;
         };
         frame.driver = self.players.get(&id).map(|p| p.name.clone());
@@ -426,7 +552,7 @@ impl Engine {
             return frame;
         };
         let Some(local) = self.poses.back() else {
-            frame.status = "OutSim required — waiting for a matching local pose".into();
+            frame.status = "OutSim required — waiting for a matching car pose".into();
             return frame;
         };
         if now
@@ -450,7 +576,7 @@ impl Engine {
             return frame;
         };
         let Some(reference) = cars.iter().find(|c| c.plid == id) else {
-            frame.status = "Local car missing from MCI — radar paused".into();
+            frame.status = "Selected car missing from MCI — radar paused".into();
             return frame;
         };
         if reference.pose.distance(me) > 12.0
@@ -470,6 +596,13 @@ impl Engine {
             "MCI + OutSim connected"
         }
         .into();
+        if self.follows_view() {
+            frame.status = format!(
+                "Following {} · {}",
+                frame.driver.as_deref().unwrap_or("viewed car"),
+                frame.status
+            );
+        }
         let mut next_threats = BTreeMap::new();
         for car in cars.iter().filter(|c| c.plid != id) {
             if self.players.get(&car.plid).is_none_or(|p| p.in_garage)

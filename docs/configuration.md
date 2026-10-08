@@ -55,6 +55,30 @@ Quote paths containing spaces.
 Desktop graphics diagnostics are written to `openradar.graphics.log` beside the
 chosen config path. See [troubleshooting](troubleshooting.md) for log details.
 
+## HUD appearance
+
+Set the top-level `hud_style` before any `[section]` headings:
+
+```toml
+hud_style = "classic" # or "gt7-inspired"
+hud_debug = false # show gap diagnostics in either HUD style when true
+```
+
+Missing settings default to Classic; unknown style names are rejected. The
+**Gadgets** tab's **HUD style** selector applies the choice immediately and
+**Save settings** persists it. External TOML edits require restarting the app.
+Changing themes retains each gadget's position, scale, and enabled state.
+**HUD debug information** in the Gadgets tab controls `hud_debug`. It defaults
+to false and reveals passage-history status and estimate measurement age in gap
+windows for both Classic and GT7-inspired.
+
+For source customization, Classic colors and dimensions remain in
+`src/overlay/radar_style.rs`, `gap_style.rs`, and `delta_style.rs`, with common
+panel defaults in `gadget_style.rs`. The additional theme is defined in
+`src/overlay/gt7_style.rs`. `theme.rs` resolves the selection and `render.rs`
+draws the gadgets. The same selected dimensions drive native windows and
+canvas fitting.
+
 ## InSim password
 
 Place this top-level setting before any `[section]` headings:
@@ -82,6 +106,16 @@ current connection; **Save settings** persists the panel field's value.
 
 ## Telemetry options
 
+`follow_viewed_car = false` is the default. Set it to `true`, or enable
+**Follow viewed car** in the control panel, to follow the watched AI or human
+car in a live single-player session. Use cockpit or custom view. Radar, gaps,
+and delta share that target; switching cars discards the previous reference lap.
+Multiplayer continues requiring your own human car. Replay following is unsupported.
+
+Click **Apply / reconnect** after changing this setting in the panel;
+**Save settings** persists it. The existing `OutSim Mode 1` configuration is
+sufficient. See [the AI debugging flow](usage.md#follow-viewed-car).
+
 `lfs_directory` remembers the folder containing `LFS.exe` for the control panel's
 **LFS startup setup** section. Setting a path or saving TOML does not edit LFS;
 click **Enable InSim at startup** to update its startup script. See the
@@ -89,7 +123,7 @@ click **Enable InSim at startup** to update its startup script. See the
 
 InSim and OutSim addresses must be loopback addresses with nonzero ports.
 OutSim options in TOML are decimal: `511` corresponds to LFS's hexadecimal `1ff`.
-See [LFS setup](../README.md#connect-lfs) for the required game settings.
+See [LFS setup](installation.md#connect-lfs) for the required game settings.
 
 Supported OutSim formats:
 
@@ -112,6 +146,113 @@ collision predictions. Model-specific dimensions and origin offsets still need
 calibration. A height gate reduces bridge/overpass detections but needs track
 testing.
 
+`side_m` accepts 0–100 metres; the desktop slider covers 0–12. Side range controls
+uniform zoom in Classic and horizontal placement in GT7. Detection includes
+half the footprint diagonal to retain cars touching the region.
+Other radar distances and car dimensions must remain positive.
+
 For gadget placement and performance-delta behavior, see the usage guide's
-[gap gadgets](usage.md#gap-gadgets-and-control-panel-grid) and
+[gap gadgets](usage.md#control-panel-and-gadget-grid) and
 [live performance delta](usage.md#live-performance-delta) sections.
+
+## Speed dashboard
+
+Enable **Speed dashboard** in Gadgets. It has its own position mode, scale,
+and overlay window. Its appearance follows the supplied speed dashboard reference
+in either HUD style. Its body and RPM header use #252525 at 40% opacity.
+The dashboard uses OutGauge independently of radar OutSim.
+OutGauge can use its own UDP port or share the OutSim port. Match
+`outgauge_bind` and `outgauge_id` to LFS’s existing OutGauge destination and ID.
+A shared port is supported when OutSim packets are not 92 or 96 bytes (the
+default full OutSim format is 280 bytes).
+
+In Settings, select the LFS installation and click **Configure OutGauge** while
+LFS is closed. This backed-up action changes only OutGauge entries in cfg.txt.
+Enable the gadget, start LFS, and drive in cockpit or custom view.
+External TOML edits require restarting OpenRadar; use **Save settings** to persist
+changes made in the panel. Enabling/disabling the gadget reconnects the worker
+so its optional OutGauge socket can be opened/released. If the two sources share
+a port, the existing OutSim socket receives both.
+
+Top-level OpenRadar settings, before any table headings:
+
+~~~toml
+outgauge_bind = "127.0.0.1:30001"
+outgauge_id = 24602 # zero selects packets without an ID
+~~~
+
+Matching LFS cfg.txt entries (not TOML):
+
+~~~text
+OutGauge Mode 1
+OutGauge Delay 2
+OutGauge IP 127.0.0.1
+OutGauge Port 30001
+OutGauge ID 24602
+~~~
+
+XFG uses a predefined 8,000 RPM dashboard scale. Save other cars' display names
+and full-scale RPM in profiles, or override the XFG scale:
+
+~~~toml
+[cars.XFG]
+name = "XF GTI"
+max_rpm = 8000
+~~~
+
+The current car identifier appears in the dashboard card. You can adjust **Max RPM**
+there and save settings, or edit the profiles directly. Profile keys are uppercase
+built-in car codes or six-digit uppercase vehicle mod IDs. Missing profiles leave
+the RPM bar grey while numeric RPM remains available. Nine evenly spaced markers
+show 10% intervals across the continuous bar. The bar runs from zero to
+the configured limit and clamps at 100%. Set **Blink threshold** in the Speed
+dashboard card (1–100%, default 95%). At or above the selected percentage, the
+filled portion alternates red and blue (#70BDFF). Below the threshold, the fill stays red.
+Set **Blink interval** to choose the time per color (50–500 ms, default 100 ms).
+Lower values blink faster; a complete red/blue cycle takes twice that interval. Changes apply immediately; **Save settings** persists the choice.
+The top-level TOML settings are `rpm_blink_threshold_percent = 95` and
+`rpm_blink_interval_ms = 100`. The demo has a synthetic 13,300 RPM limit.
+Speed units follow LFS's km/h/mph preference; gear shows R, N, or the forward gear.
+
+ABS uses the selected car's InSim setup flag: white when enabled, red when
+intervening, and grey when disabled. The red state requires both ABS enabled
+and its OutGauge warning lamp active. TC mirrors its warning lamp, indicating
+intervention or a disabled system. Engine damage uses the game's minor/severe
+flags. Headlights are white for sidelights/dipped beam and blue for high beam
+or flashing; high beam takes priority when multiple light flags are active. On
+InSim 10+ the local human car also uses its actual light switch, so low beam
+works on cars whose dashboard has no dipped-beam symbol. Older LFS versions
+and followed AI cars use the available OutGauge symbols. The gear turns red while
+the game's shift lamp is on. Unsupported lamps and missing/stale/mismatched
+telemetry show dashes. Samples must match the selected local/viewed player's ID
+and car identifier; the existing live-view restrictions apply. Dashboard updates
+remain available when OutSim is missing. OutGauge bind failures do not stop radar.
+
+For connection diagnostics, run OpenRadar with `--headless --seconds 10`
+(using the same `--config` path as the desktop app). With Speed dashboard enabled,
+this prints its status, latest sample, age, and any OutGauge errors. Close the
+desktop app first so the diagnostic process can bind the telemetry socket.
+
+## Fuel
+
+Enable **Fuel** in Gadgets after configuring [OutGauge](#speed-dashboard). Fuel
+uses the same receiver as Speed dashboard and works with that gadget disabled,
+or with OutSim unavailable. InSim supplies the selected car and race progress.
+It follows your own car in multiplayer or the watched car in supported live
+single-player follow mode. Enabling/disabling Fuel reconnects the worker.
+
+~~~toml
+[fuel]
+enabled = true
+window_x = 376.0
+window_y = 746.0
+scale = 1.0
+~~~
+
+The Fuel card provides Position mode, X/Y, and scale. Fuel is shown as tank
+percentage; no tank-capacity setting is needed. Old `fuel_tank_litres` entries
+are accepted for compatibility and removed when settings are saved.
+
+Fuel defaults to disabled in older configurations. It shares the dashboard's
+#252525 body at 40% opacity and retains its supplied design in either HUD style.
+See [Fuel usage](usage.md#fuel) for the range, margin, and REFUEL meanings.

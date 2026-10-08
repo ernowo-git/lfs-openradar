@@ -97,10 +97,14 @@ fn requested_player_roster_is_distinct_from_a_car_rejoining() {
     let mut bytes = packet(21, 76);
     bytes[3] = 7;
     bytes[73] = 1;
-    assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Player(_)));
+    assert!(
+        matches!(insim::decode(&bytes).unwrap(), Packet::Player(player) if !player.abs_enabled)
+    );
+    bytes[72] = insim::SETF_ABS_ENABLE;
+    assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Player(player) if player.abs_enabled));
     bytes[2] = 1;
     assert!(
-        matches!(insim::decode(&bytes).unwrap(), Packet::PlayerSnapshot(player) if player.plid == 7)
+        matches!(insim::decode(&bytes).unwrap(), Packet::PlayerSnapshot(player) if player.plid == 7 && player.abs_enabled)
     );
 }
 #[test]
@@ -174,4 +178,20 @@ fn initialization_keeps_mci_on_tcp() {
     let p = insim::init(20, "").unwrap();
     assert_eq!(&p[..12], &[11, 1, 1, 0, 0, 0, 36, 1, 9, 0, 20, 0]);
     assert!(insim::init(20, &"a".repeat(16)).is_err());
+}
+
+#[test]
+fn local_light_reply_decodes_switch_without_confusing_other_small_packets() {
+    let mut bytes = packet(4, 8);
+    bytes[2] = 17;
+    bytes[3] = 10;
+    for headlights in 0..=3_u32 {
+        bytes[4..8].copy_from_slice(&((headlights << 18) | 0x00410000).to_le_bytes());
+        assert!(
+            matches!(insim::decode(&bytes).unwrap(), Packet::LocalLights { request: 17, headlights: value } if value == headlights as u8)
+        );
+    }
+    bytes[3] = 6;
+    assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Other));
+    assert!(insim::decode(&packet(4, 4)).is_err());
 }

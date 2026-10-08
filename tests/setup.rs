@@ -338,3 +338,26 @@ fn outsim_missing_invalid_files_installation_and_configuration_fail_before_writi
     fs::remove_file(fixture.root.join("LFS.exe")).unwrap();
     assert!(setup::prepare_outsim(&fixture.root, &Config::default()).is_err());
 }
+
+#[test]
+fn outgauge_setup_preserves_outsim_and_other_settings_with_backup() {
+    let fixture = Installation::new(None);
+    let cfg = fixture.root.join("cfg.txt");
+    let original = b"Game Admin unchanged\r\nOutSim Port 30000\r\nOutGauge Mode 0 // keep comment\r\nOutGauge Port 1234\r\n";
+    fs::write(&cfg, original).unwrap();
+    let plan = setup::prepare_outgauge(&fixture.root, &Config::default()).unwrap();
+    let result = setup::apply_outsim(&plan).unwrap();
+    assert_eq!(fs::read(result.backup_path.unwrap()).unwrap(), original);
+    let bytes = fs::read(&cfg).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("OutSim Port 30000"));
+    assert!(text.contains("Game Admin unchanged"));
+    assert!(text.contains("OutGauge Mode 1 // keep comment"));
+    assert!(text.contains("OutGauge Port 30001"));
+    assert!(text.contains("OutGauge ID 24602"));
+    assert!(
+        !setup::apply_outsim(&setup::prepare_outgauge(&fixture.root, &Config::default()).unwrap())
+            .unwrap()
+            .changed
+    );
+}

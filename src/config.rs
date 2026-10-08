@@ -1,5 +1,23 @@
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::Path};
+use std::{collections::BTreeMap, net::SocketAddr, path::Path};
+
+/// Built-in overlay appearance, independent of the desktop renderer.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HudStyle {
+    #[default]
+    Classic,
+    Gt7Inspired,
+}
+
+impl HudStyle {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Gt7Inspired => "GT7-inspired",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -28,6 +46,18 @@ impl Default for GapSettings {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CarProfile {
+    pub name: String,
+    /// Zero is accepted for legacy capacity-only profiles; the RPM bar stays unavailable.
+    #[serde(default)]
+    pub max_rpm: u32,
+    /// Read old settings without exposing or saving the retired litres option.
+    #[serde(default, skip_serializing)]
+    pub fuel_tank_litres: Option<f64>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -36,6 +66,16 @@ pub struct Config {
     /// Folder containing the user's LFS.exe; only the setup button edits LFS.
     pub lfs_directory: String,
     pub outsim_bind: SocketAddr,
+    pub outgauge_bind: SocketAddr,
+    /// Zero selects the 92-byte OutGauge packet without an ID.
+    pub outgauge_id: i32,
+    pub cars: BTreeMap<String, CarProfile>,
+    pub speed_dashboard: GapSettings,
+    pub fuel: GapSettings,
+    /// Percentage of the configured RPM limit that starts the red/blue blink.
+    pub rpm_blink_threshold_percent: u8,
+    /// Time each RPM blink color is shown, in milliseconds.
+    pub rpm_blink_interval_ms: u16,
     /// Zero selects the legacy layout; otherwise OutSim Opts bitmask.
     pub outsim_options: u16,
     /// Zero disables ID validation and selects a legacy packet without an ID.
@@ -53,9 +93,14 @@ pub struct Config {
     pub overlay_x: f32,
     pub overlay_y: f32,
     pub overlay_size: f32,
+    pub hud_style: HudStyle,
+    /// Show diagnostic status and measurement age in gap gadgets for either HUD style.
+    pub hud_debug: bool,
     pub hide_when_background: bool,
     /// Key that toggles all overlays; "None" disables the shortcut.
     pub overlay_toggle_key: String,
+    /// Follow the viewed car in live single player; multiplayer still uses your own car.
+    pub follow_viewed_car: bool,
     pub radar_enabled: bool,
     pub gap_ahead: GapSettings,
     pub gap_behind: GapSettings,
@@ -79,6 +124,20 @@ impl Default for Config {
             insim_password: InSimPassword::default(),
             lfs_directory: String::new(),
             outsim_bind: "127.0.0.1:30000".parse().unwrap(),
+            outgauge_bind: "127.0.0.1:30001".parse().unwrap(),
+            outgauge_id: 24602,
+            cars: BTreeMap::from([(
+                "XFG".into(),
+                CarProfile {
+                    name: "XF GTI".into(),
+                    max_rpm: 8000,
+                    fuel_tank_litres: None,
+                },
+            )]),
+            speed_dashboard: GapSettings::default(),
+            fuel: GapSettings::default(),
+            rpm_blink_threshold_percent: 95,
+            rpm_blink_interval_ms: 100,
             outsim_options: 0x1ff,
             outsim_id: 24601,
             mci_interval_ms: 20,
@@ -94,8 +153,11 @@ impl Default for Config {
             overlay_x: 40.0,
             overlay_y: 160.0,
             overlay_size: 320.0,
+            hud_style: HudStyle::Classic,
+            hud_debug: false,
             hide_when_background: true,
             overlay_toggle_key: "Insert".into(),
+            follow_viewed_car: false,
             radar_enabled: true,
             gap_ahead: GapSettings::default(),
             gap_behind: GapSettings::default(),
@@ -152,6 +214,9 @@ impl Config {
     pub fn expected_outsim_id(&self) -> Option<i32> {
         (self.outsim_id != 0).then_some(self.outsim_id)
     }
+    pub fn needs_outgauge(&self) -> bool {
+        self.speed_dashboard.enabled || self.fuel.enabled
+    }
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         // TOML errors can echo source lines containing the password.
@@ -165,6 +230,8 @@ impl Config {
     pub fn save(&self, path: &Path) -> Result<(), String> {
         self.validate()?;
         let mut saved = self.clone();
+        // These legacy profiles only configured the retired litres display.
+        saved.cars.retain(|_, profile| profile.max_rpm > 0);
         saved.prepare_gap_positions();
         let raw = toml::to_string_pretty(&saved).map_err(|e| e.to_string())?;
         std::fs::write(path, raw).map_err(|e| e.to_string())
@@ -175,6 +242,8 @@ impl Config {
             (&mut self.gap_ahead, 0.12, 0.0),
             (&mut self.gap_behind, 0.88, 100.0),
             (&mut self.performance_delta, 0.5, 200.0),
+            (&mut self.speed_dashboard, 0.5, 360.0),
+            (&mut self.fuel, 0.5, 586.0),
         ] {
             let legacy = settings.legacy_x.is_some() || settings.legacy_y.is_some();
             settings.window_x.get_or_insert(if legacy {
@@ -194,9 +263,41 @@ impl Config {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=100).contains(&self.rpm_blink_threshold_percent) {
+            return Err("rpm_blink_threshold_percent must be 1..100".into());
+        }
+        if !(50..=500).contains(&self.rpm_blink_interval_ms) {
+            return Err("rpm_blink_interval_ms must be 50..500".into());
+        }
+        for (code, profile) in &self.cars {
+            if code.trim().is_empty()
+                || profile.name.trim().is_empty()
+                || (profile.max_rpm == 0 && profile.fuel_tank_litres.is_none())
+            {
+                return Err(
+                    "car profiles require a car code, a name, and an RPM limit or fuel capacity"
+                        .into(),
+                );
+            }
+            if profile
+                .fuel_tank_litres
+                .is_some_and(|v| !v.is_finite() || v <= 0.0)
+            {
+                return Err("fuel tank capacity must be finite and positive".into());
+            }
+        }
+        if !self.outgauge_bind.ip().is_loopback() || self.outgauge_bind.port() == 0 {
+            return Err("OutGauge requires a nonzero loopback UDP endpoint".into());
+        }
         self.overlay_toggle_key()?;
         crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
-        for settings in [&self.gap_ahead, &self.gap_behind, &self.performance_delta] {
+        for settings in [
+            &self.gap_ahead,
+            &self.gap_behind,
+            &self.performance_delta,
+            &self.speed_dashboard,
+            &self.fuel,
+        ] {
             if [settings.window_x, settings.window_y]
                 .iter()
                 .flatten()
@@ -235,8 +336,21 @@ impl Config {
         {
             return Err("OutSim options must include TIME and MAIN, or be zero for legacy".into());
         }
+        if self.needs_outgauge()
+            && self.outgauge_bind == self.outsim_bind
+            && matches!(
+                crate::lfs::outsim::packet_size(self.outsim_options, self.expected_outsim_id())?,
+                92 | 96
+            )
+        {
+            return Err(
+                "OutGauge needs a separate port when OutSim packets are 92 or 96 bytes".into(),
+            );
+        }
+        if !self.side_m.is_finite() || !(0.0..=100.0).contains(&self.side_m) {
+            return Err("Radar side range must be finite and 0..100 metres".into());
+        }
         for v in [
-            self.side_m,
             self.front_m,
             self.rear_m,
             self.height_m,
