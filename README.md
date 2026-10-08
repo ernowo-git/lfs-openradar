@@ -9,6 +9,12 @@ It connects to your local LFS client through InSim and OutSim. Regular players
 can use it in multiplayer without the server's admin password. Windows is the
 primary platform; Linux/X11 support is experimental.
 
+> [!NOTE]
+> This project's development relies heavily on AI assistance for the codebase.
+> AI tools are used strictly behind the scenes to make the development workflow
+> more efficient. I have a love-hate relationship with LLMs, but they help move
+> development forward so I can spend more time racing with what LLM is building.
+
 ## Quick preview
 
 <img src="assets/preview.gif" alt="OpenRadar in Live for Speed showing the radar, gap gadgets, and performance delta" width="100%">
