@@ -1,6 +1,48 @@
 # Usage guide
 
-For installation and a quick start, see [the README](../README.md).
+## Quick start
+
+After completing [installation and first configuration](installation.md), launch
+OpenRadar from the folder containing your configuration:
+
+```powershell
+.\lfs-openradar.exe
+```
+
+On Linux, use `./lfs-openradar`. To preview the app without LFS or network sockets,
+add `--demo`; when running from source, use `cargo run --locked -- --demo`.
+
+1. Start LFS and drive your own car in cockpit or custom view. Confirm that the
+   MCI and OutSim age indicators are updating.
+2. Enable **Show overlays** in **Settings**, then enable the cards you want
+   in **Gadgets**. On Windows, press **Insert** to toggle all overlays while driving.
+   Change `overlay_toggle_key` in your TOML file to use another key.
+3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
+   turn Position mode off to restore the transparent, click-through overlay.
+4. Choose **Classic** or **GT7-inspired** under **HUD style** in **Gadgets**.
+   Adjust size or scale and click **Save settings** to keep your placement and style.
+   Use **Apply / reconnect** after changing connection or telemetry settings.
+
+For hands-free debugging, start a single-player AI race, watch an AI in cockpit
+or custom view, enable **Follow viewed car**, then click **Apply / reconnect**.
+Radar, gaps, and delta follow that driver. Changing drivers clears the lap
+reference. Disable **Hide overlay when LFS is in background** to watch the
+overlay while debugging in another window. See [follow-view usage](#follow-viewed-car).
+
+The gaps compare adjacent **race-order** drivers on standard circuit layouts.
+The performance delta records a full reference lap from the finish line.
+In a race, recording starts at the beginning of lap 2; after a clean lap 2 is
+confirmed by LFS, comparison starts on lap 3.
+Negative/green means ahead; positive/red means behind. **GAINING / LOSING** shows
+the recent change. **Estimated lap** projects the current lap's finish time
+using the session-best reference and live delta.
+Gaps, delta, and projected lap times are estimates; stale or unsuitable telemetry
+shows unavailable.
+
+Keep the control panel open; closing it exits OpenRadar. Windows can hide the
+overlays when LFS is in the background. Windowed or borderless LFS is the initial
+target. See [platform status](#platform-status) for platform limitations and
+[graphics diagnostics](#graphics-diagnostics) for troubleshooting details.
 
 ## HUD styles
 

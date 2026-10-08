@@ -123,7 +123,7 @@ click **Enable InSim at startup** to update its startup script. See the
 
 InSim and OutSim addresses must be loopback addresses with nonzero ports.
 OutSim options in TOML are decimal: `511` corresponds to LFS's hexadecimal `1ff`.
-See [LFS setup](../README.md#connect-lfs) for the required game settings.
+See [LFS setup](installation.md#connect-lfs) for the required game settings.
 
 Supported OutSim formats:
 
@@ -152,7 +152,7 @@ half the footprint diagonal to retain cars touching the region.
 Other radar distances and car dimensions must remain positive.
 
 For gadget placement and performance-delta behavior, see the usage guide's
-[gap gadgets](usage.md#gap-gadgets-and-control-panel-grid) and
+[gap gadgets](usage.md#control-panel-and-gadget-grid) and
 [live performance delta](usage.md#live-performance-delta) sections.
 
 ## Speed dashboard

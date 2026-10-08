@@ -98,7 +98,7 @@ python .github/scripts/release.py check
 python -m unittest discover -s .github/scripts -p "test_*.py" -v
 ```
 
-Run the Rust commands listed in [the README](../README.md#testing)
+Run the Rust commands listed in [the development guide](development.md#testing)
 for application changes. Workflow definitions can additionally be checked with
 `actionlint .github/workflows/ci.yml .github/workflows/release.yml`.
 Linux builds run on GitHub's Linux runners; no local Linux build is required.
