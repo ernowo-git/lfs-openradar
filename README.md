@@ -20,6 +20,17 @@ primary platform; Linux/X11 support is experimental.
 
 [Watch OpenRadar in action on YouTube](https://youtu.be/zHja2vsNfss).
 
+## Quick Setup
+
+1. [Download](https://github.com/ernowo-git/lfs-openradar/releases), extract, and launch OpenRadar with LFS closed.
+2. In **Settings → LFS startup setup**, select your LFS folder and click **Enable InSim at startup**, **Configure OutSim**, and **Configure OutGauge**.
+3. Start LFS, click **Apply / reconnect**, enable **Show overlays**, and drive your car.
+4. Enable your gadgets, use **Position mode** to place them, then turn it off and click **Save settings**.
+
+<img src="assets/quick-setup.gif" alt="Short tutorial showing how to set up OpenRadar for Live for Speed" width="100%">
+
+See the [installation guide](docs/installation.md) for details.
+
 ## Features
 
 - Proximity radar
