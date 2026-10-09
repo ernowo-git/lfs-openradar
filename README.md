@@ -16,6 +16,14 @@ primary platform; Linux/X11 support is experimental.
 > I have mixed feelings about LLMs, but they help me keep development moving
 > and spend more time racing.
 
+## Features
+
+- Proximity radar
+- [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
+- [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)
+- Real-time gap ahead/behind indicator
+- Lap performance delta
+
 ## Quick preview
 
 <a href="https://youtu.be/zHja2vsNfss"><img src="https://img.youtube.com/vi/zHja2vsNfss/hqdefault.jpg" alt="Watch OpenRadar in action" width="100%"></a>
@@ -32,14 +40,6 @@ primary platform; Linux/X11 support is experimental.
 <img src="assets/quick-setup.gif" alt="Short tutorial showing how to set up OpenRadar for Live for Speed" width="100%">
 
 See the [installation guide](docs/installation.md) for details.
-
-## Features
-
-- Proximity radar
-- [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
-- [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)
-- Real-time gap ahead/behind indicator
-- Lap performance delta
 
 ## Table of contents
 
