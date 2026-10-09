@@ -1050,7 +1050,10 @@ mod tests {
     #[test]
     fn classic_zoom_keeps_circles_round_and_footprints_proportional() {
         let ctx = egui::Context::default();
-        let config = Config::default();
+        let config = Config {
+            hud_style: HudStyle::Classic,
+            ..Default::default()
+        };
         let radar = theme::resolve(HudStyle::Classic).radar;
         for side in [0.0, 0.1, 1.0, 3.0, 5.0, 8.0, 9.0, 12.0] {
             let config = Config {

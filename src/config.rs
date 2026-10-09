@@ -5,8 +5,9 @@ use std::{collections::BTreeMap, net::SocketAddr, path::Path};
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum HudStyle {
-    #[default]
     Classic,
+    #[default]
+    #[serde(rename = "gt", alias = "gt7-inspired")]
     Gt7Inspired,
 }
 
@@ -14,7 +15,7 @@ impl HudStyle {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Classic => "Classic",
-            Self::Gt7Inspired => "GT7-inspired",
+            Self::Gt7Inspired => "GT",
         }
     }
 }
@@ -176,7 +177,7 @@ impl Default for Config {
             overlay_x: 40.0,
             overlay_y: 160.0,
             overlay_size: 320.0,
-            hud_style: HudStyle::Classic,
+            hud_style: HudStyle::default(),
             hud_debug: false,
             hide_when_background: true,
             overlay_toggle_key: "Insert".into(),

@@ -1,6 +1,6 @@
 # Bundled HUD font licenses
 
-The GT7-inspired HUD uses Roboto for labels and Orbitron for time readouts.
+The GT HUD uses Roboto for labels and Orbitron for time readouts.
 The speed dashboard uses Azeret Mono Bold for RPM and speed values.
 These fonts are embedded in the desktop executable. All use the SIL Open Font License 1.1.
 

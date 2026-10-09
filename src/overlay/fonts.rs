@@ -1,4 +1,4 @@
-//! Embedded fonts used by GT7-inspired HUD families and the speed dashboard.
+//! Embedded fonts used by GT HUD families and the speed dashboard.
 
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
 

@@ -1668,7 +1668,7 @@ mod tests {
                     Shape::Text(text)
                         if matches!(
                             text.galley.job.text.as_str(),
-                            "Classic" | "HUD debug information"
+                            "GT" | "HUD debug information"
                         ) =>
                     {
                         Some(text.visual_bounding_rect())
@@ -1984,6 +1984,7 @@ mod tests {
         ctx.set_embed_viewports(false);
         let mut config = Config {
             radar_enabled: false,
+            hud_style: HudStyle::Classic,
             ..Default::default()
         };
         config.gap_ahead.enabled = true;
@@ -2342,7 +2343,10 @@ mod tests {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
-        let mut config = Config::default();
+        let mut config = Config {
+            hud_style: HudStyle::Classic,
+            ..Default::default()
+        };
         config.performance_delta.enabled = true;
         config.gap_ahead.enabled = true;
         let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
@@ -2526,7 +2530,10 @@ mod tests {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
-        let config = Config::default();
+        let config = Config {
+            hud_style: HudStyle::Classic,
+            ..Default::default()
+        };
         let window = OverlayWindow::new(&config);
         let data = Arc::new(Mutex::new(OverlayData {
             source: OverlaySource::Disconnected,

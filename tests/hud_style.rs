@@ -1,21 +1,32 @@
 use lfs_openradar::config::{Config, HudStyle};
 
 #[test]
-fn legacy_and_example_configs_keep_classic_and_both_themes_round_trip() {
+fn default_and_example_configs_use_gt_and_both_themes_round_trip() {
+    assert_eq!(HudStyle::default(), HudStyle::Gt7Inspired);
+    assert_eq!(Config::default().hud_style, HudStyle::Gt7Inspired);
+    assert_eq!(HudStyle::Gt7Inspired.label(), "GT");
     let legacy: Config = toml::from_str("overlay_x = 123.0").unwrap();
-    assert_eq!(legacy.hud_style, HudStyle::Classic);
+    assert_eq!(legacy.hud_style, HudStyle::Gt7Inspired);
     assert!(!legacy.hud_debug);
     let example: Config = toml::from_str(include_str!("../openradar.example.toml")).unwrap();
-    assert_eq!(example.hud_style, HudStyle::Classic);
+    assert_eq!(example.hud_style, HudStyle::Gt7Inspired);
     assert!(!example.hud_debug);
     for (name, expected) in [
         ("classic", HudStyle::Classic),
+        ("gt", HudStyle::Gt7Inspired),
         ("gt7-inspired", HudStyle::Gt7Inspired),
     ] {
         let config: Config = toml::from_str(&format!("hud_style = '{name}'\nhud_debug = true\noverlay_x = 123.0\n[gap_ahead]\nscale = 1.5\nwindow_x = 456.0\nenabled = true")).unwrap();
         config.validate().unwrap();
         assert_eq!(config.hud_style, expected);
-        let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        let saved = toml::to_string(&config).unwrap();
+        let canonical = if expected == HudStyle::Classic {
+            "classic"
+        } else {
+            "gt"
+        };
+        assert!(saved.contains(&format!("hud_style = \"{canonical}\"")));
+        let restored: Config = toml::from_str(&saved).unwrap();
         assert_eq!(restored.hud_style, expected);
         assert!(restored.hud_debug);
         assert_eq!(restored.overlay_x, 123.0);

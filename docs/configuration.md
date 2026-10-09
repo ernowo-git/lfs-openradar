@@ -60,17 +60,18 @@ chosen config path. See [troubleshooting](troubleshooting.md) for log details.
 Set the top-level `hud_style` before any `[section]` headings:
 
 ```toml
-hud_style = "classic" # or "gt7-inspired"
+hud_style = "gt" # default; or "classic"
 hud_debug = false # show gap diagnostics in either HUD style when true
 ```
 
-Missing settings default to Classic; unknown style names are rejected. The
+Missing settings default to GT; unknown style names are rejected. The previous
+`gt7-inspired` value is still accepted and saved as `gt`. The
 **Gadgets** tab's **HUD style** selector applies the choice immediately and
 **Save settings** persists it. External TOML edits require restarting the app.
 Changing themes retains each gadget's position, scale, and enabled state.
 **HUD debug information** in the Gadgets tab controls `hud_debug`. It defaults
 to false and reveals passage-history status and estimate measurement age in gap
-windows for both Classic and GT7-inspired.
+windows for both Classic and GT.
 
 For source customization, Classic colors and dimensions remain in
 `src/overlay/radar_style.rs`, `gap_style.rs`, and `delta_style.rs`, with common
@@ -147,7 +148,7 @@ calibration. A height gate reduces bridge/overpass detections but needs track
 testing.
 
 `side_m` accepts 0–100 metres; the desktop slider covers 0–12. Side range controls
-uniform zoom in Classic and horizontal placement in GT7. Detection includes
+uniform zoom in Classic and horizontal placement in GT. Detection includes
 half the footprint diagonal to retain cars touching the region.
 Other radar distances and car dimensions must remain positive.
 

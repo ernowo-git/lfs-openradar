@@ -1,6 +1,6 @@
 # HUD fonts
 
-These unmodified fonts are embedded for the GT7-inspired HUD and speed dashboard. Classic
+These unmodified fonts are embedded for the GT HUD and speed dashboard. Classic
 continues using egui's default font families. No font installation is required.
 
 | Asset | Upstream source | SHA-256 |

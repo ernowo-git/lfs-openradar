@@ -1,7 +1,7 @@
-# Additional GT7-inspired HUD style
+# GT HUD style
 
 Status: implemented and revised against the user's five visual references,
-with Classic retained as the default.
+renamed to GT and selected by default when no style is saved.
 
 The saved `HudStyle` enum and `theme.rs` resolver select the existing Classic
 constants or the separate `gt7_style.rs` bundle. Painting and display formatting
@@ -12,9 +12,9 @@ layout test's stale position-mode label lookup has also been corrected.
 
 ## Objective
 
-Add a selectable **GT7-inspired** style for Radar, Gap Ahead, Gap Behind, and
+Add a selectable **GT** style for Radar, Gap Ahead, Gap Behind, and
 Performance Delta. Keep the current appearance available as **Classic**, and keep
-Classic as the default for both new installations and existing configuration files.
+GT as the default for new installations and configuration files without a saved style.
 Preserve the current style constants, including local edits to colors and borders.
 
 The first version should use one global **HUD style** selector. Each gadget keeps
@@ -139,8 +139,8 @@ values. Millisecond display formatting preserves the existing engine calculation
 ## Implementation design
 
 1. Add a UI-independent `HudStyle` enum to configuration, serialized as `classic`
-   and `gt7-inspired`. Its default is `Classic`, so old files with no style field
-   retain their appearance. Keep this enum usable without the desktop feature.
+   and `gt`, accepting `gt7-inspired` as a legacy alias. Its default is GT;
+   explicit Classic selections are retained. Keep this enum usable without the desktop feature.
 2. Add a desktop theme resolver returning an immutable bundle of radar, ahead,
    behind, and delta styles for the selected enum value.
 3. Compose the Classic bundle from the existing `radar_style.rs`, `gap_style.rs`,
@@ -154,7 +154,7 @@ values. Millisecond display formatting preserves the existing engine calculation
 5. Pass resolved styles into painting functions. Use the same resolved base size
    for both native viewport builders and canvas fitting. Remove direct Classic
    constant lookups from paths that need to honor the selection.
-6. Add a global `HUD style` dropdown with `Classic` and `GT7-inspired` choices,
+6. Add a global `HUD style` dropdown with `Classic` and `GT` choices,
    placed near the gadget controls. Apply changes immediately and persist them
    through the existing **Save settings** action.
 7. Ensure retained child viewport callbacks read the current selection at paint
@@ -172,7 +172,7 @@ Shapes are drawn with code; the supplied screenshots are not shipped as assets.
 
 ## Delivery sequence
 
-1. Review a visual comparison of Classic and the proposed GT7-inspired gadgets
+1. Review a visual comparison of Classic and the proposed GT gadgets
    with identical sample telemetry, including warnings and unavailable states.
 2. Implement theme selection, persistence, and the two theme bundles.
 3. Add radar geometry and gap/delta layout treatments for the additional theme.
