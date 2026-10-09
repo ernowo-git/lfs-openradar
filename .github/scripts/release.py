@@ -243,7 +243,7 @@ def publish(client: GitHub, output: Path, version: str, commit: str):
         return
     if release is None:
         release = client.api("POST", "releases", {
-            "tag_name": tag, "target_commitish": commit, "name": f"LFS OpenRadar {tag}",
+            "tag_name": tag, "target_commitish": commit, "name": tag,
             "draft": True, "prerelease": prerelease, "generate_release_notes": True,
             "body": "Windows x64 and experimental Linux x64 downloads are attached. "
                     "See the bundled README and BUILD-INFO.txt for runtime requirements "
@@ -256,6 +256,7 @@ def publish(client: GitHub, output: Path, version: str, commit: str):
     verify_assets(assets, files)
     client.verify_tag(tag, commit)
     client.api("PATCH", f"releases/{release['id']}", {
+        "name": tag,
         "draft": False, "prerelease": prerelease,
         "make_latest": "false" if prerelease else "legacy",
     })

@@ -138,9 +138,11 @@ class PublishTests(unittest.TestCase):
         self.assertTrue(creation["draft"])
         self.assertTrue(creation["generate_release_notes"])
         self.assertEqual(creation["target_commitish"], SHA)
+        self.assertEqual(creation["name"], "v0.3.0")
         client.upload.assert_called_once()
         self.assertEqual(client.api.call_args_list[-1].args,
-                         ("PATCH", "releases/7", {"draft": False, "prerelease": False, "make_latest": "legacy"}))
+                         ("PATCH", "releases/7", {"name": "v0.3.0", "draft": False,
+                                                  "prerelease": False, "make_latest": "legacy"}))
 
     def test_failed_upload_does_not_publish(self):
         client = Mock(spec=release.GitHub)
@@ -159,9 +161,11 @@ class PublishTests(unittest.TestCase):
 
     def test_draft_retry_preserves_notes_and_published_retry_leaves_downloads_alone(self):
         client = Mock(spec=release.GitHub)
-        client.api.side_effect = [{"id": 7, "draft": True, "target_commitish": SHA}, self.assets(), {}]
+        client.api.side_effect = [{"id": 7, "draft": True, "target_commitish": SHA,
+                                  "name": "old draft title"}, self.assets(), {}]
         release.publish(client, self.output, self.version, SHA)
         self.assertFalse(any(c.args[0] == "POST" for c in client.api.call_args_list))
+        self.assertEqual(client.api.call_args_list[-1].args[2]["name"], "v0.3.0")
         client = Mock(spec=release.GitHub)
         assets = self.assets()
         (self.output / release.asset_names(self.version)[0]).write_bytes(b"different rebuilt binary")
@@ -191,6 +195,7 @@ class PublishTests(unittest.TestCase):
         client.api.side_effect = [None, {"id": 7, "draft": True}, assets, {}]
         release.publish(client, self.output, version, SHA)
         self.assertTrue(client.api.call_args_list[1].args[2]["prerelease"])
+        self.assertEqual(client.api.call_args_list[-1].args[2]["name"], "v0.3.0-rc.1")
         self.assertEqual(client.api.call_args_list[-1].args[2]["make_latest"], "false")
 
     def test_annotated_tag_integrity_is_verified(self):
