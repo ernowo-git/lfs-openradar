@@ -1,5 +1,7 @@
 # LFS OpenRadar v0.2
 
+OpenRadar supports LFS 0.8C29.
+
 ## Changes
 
 - Separate gap-ahead and gap-behind overlay windows, each with its own visibility,

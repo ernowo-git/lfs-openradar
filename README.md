@@ -1,6 +1,6 @@
 # lfs-openradar
 
-OpenRadar is a standalone overlay for Live for Speed with a proximity radar,
+OpenRadar supports LFS 0.8C29. It is a standalone overlay for Live for Speed with a proximity radar,
 a speed and indicator dashboard, fuel range and refuelling estimates,
 estimated gaps to the cars ahead and behind,
 and a real-time performance delta
@@ -18,9 +18,7 @@ primary platform; Linux/X11 support is experimental.
 
 ## Quick preview
 
-<img src="assets/preview.gif" alt="OpenRadar in Live for Speed showing the radar, gap gadgets, and performance delta" width="100%">
-
-Live preview. Yes, we need more pixels.
+[Watch OpenRadar in action on YouTube](https://youtu.be/zHja2vsNfss).
 
 ## Features
 
