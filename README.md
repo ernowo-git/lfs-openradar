@@ -18,6 +18,8 @@ primary platform; Linux/X11 support is experimental.
 
 ## Quick preview
 
+[![Watch OpenRadar in action](https://img.youtube.com/vi/zHja2vsNfss/hqdefault.jpg)](https://youtu.be/zHja2vsNfss)
+
 [Watch OpenRadar in action on YouTube](https://youtu.be/zHja2vsNfss).
 
 ## Quick Setup
