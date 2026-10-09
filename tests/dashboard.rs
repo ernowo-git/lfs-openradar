@@ -227,6 +227,38 @@ fn shared_telemetry_port_requires_distinguishable_packet_sizes() {
 }
 
 #[test]
+fn outgauge_forwarding_round_trips_and_rejects_invalid_or_looping_destinations() {
+    let legacy: Config = toml::from_str("").unwrap();
+    assert!(legacy.outgauge_forward.is_empty());
+    assert!(!legacy.needs_outgauge());
+    let mut config: Config = toml::from_str("outgauge_forward = '127.0.0.1:60000'").unwrap();
+    assert!(config.needs_outgauge());
+    config.validate().unwrap();
+    let saved: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+    assert_eq!(saved.outgauge_forward, config.outgauge_forward);
+    let multiple: Config =
+        toml::from_str("outgauge_forward = ['127.0.0.1:60000', '127.0.0.1:60001']").unwrap();
+    multiple.validate().unwrap();
+    assert_eq!(multiple.outgauge_forward.len(), 2);
+    let saved: Config = toml::from_str(&toml::to_string(&multiple).unwrap()).unwrap();
+    assert_eq!(saved.outgauge_forward, multiple.outgauge_forward);
+    for destination in [
+        "127.0.0.1:0".parse().unwrap(),
+        "192.168.1.1:60000".parse().unwrap(),
+        "[::1]:60000".parse().unwrap(),
+        config.outgauge_bind,
+        config.outsim_bind,
+    ] {
+        config.outgauge_forward = vec!["127.0.0.1:60000".parse().unwrap(), destination];
+        assert!(config.validate().is_err(), "{destination}");
+    }
+    config.outgauge_forward = vec!["127.0.0.1:60000".parse().unwrap()];
+    config.outgauge_bind = config.outsim_bind;
+    config.outsim_options = 31;
+    assert!(config.validate().unwrap_err().contains("separate port"));
+}
+
+#[test]
 fn blink_threshold_defaults_to_ninety_five_and_round_trips_with_valid_bounds() {
     let legacy: Config = toml::from_str("[speed_dashboard]\nenabled=true").unwrap();
     assert_eq!(legacy.rpm_blink_threshold_percent, 95);

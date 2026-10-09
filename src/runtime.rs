@@ -29,6 +29,7 @@ pub struct Snapshot {
     pub dashboard: crate::dashboard::DashboardFrame,
     pub fuel: crate::fuel::FuelFrame,
     pub outgauge_error: Option<String>,
+    pub outgauge_forward_error: Option<String>,
     pub error: Option<String>,
     pub mci_sets: u64,
     pub outsim_samples: u64,
@@ -114,12 +115,21 @@ fn receive_outgauge(
     config: &Config,
     engine: &mut Engine,
     now: u64,
-    protocol_ready: bool,
+    socket: &UdpSocket,
     dashboard: &mut crate::dashboard::DashboardTelemetry,
     stats: &mut Snapshot,
 ) {
     match outgauge::decode(bytes, config.outgauge_id) {
-        Ok(sample) if protocol_ready => {
+        Ok(sample) => {
+            stats.outgauge_forward_error = None;
+            for destination in &config.outgauge_forward {
+                if let Err(error) = socket.send_to(bytes, destination) {
+                    stats.outgauge_forward_error.get_or_insert_with(|| {
+                        format!("outgauge forwarding to {destination}: {error}")
+                    });
+                }
+            }
+            // The engine has no dashboard player until InSim is ready.
             if dashboard.receive(
                 sample.clone(),
                 now,
@@ -130,7 +140,6 @@ fn receive_outgauge(
             }
             stats.outgauge_error = None;
         }
-        Ok(_) => {}
         Err(error) => stats.outgauge_error = Some(error),
     }
 }
@@ -388,7 +397,7 @@ fn run(
                                     &config,
                                     &mut engine,
                                     start.elapsed().as_millis() as u64,
-                                    protocol_ready,
+                                    &udp,
                                     &mut dashboard,
                                     &mut stats,
                                 );
@@ -435,7 +444,7 @@ fn run(
                             &config,
                             &mut engine,
                             start.elapsed().as_millis() as u64,
-                            protocol_ready,
+                            socket,
                             &mut dashboard,
                             &mut stats,
                         );

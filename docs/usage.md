@@ -19,7 +19,7 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
    Change `overlay_toggle_key` in your TOML file to use another key.
 3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
    turn Position mode off to restore the transparent, click-through overlay.
-4. Choose **Classic** or **GT7-inspired** under **HUD style** in **Gadgets**.
+4. Choose **Classic** or **GT** under **HUD style** in **Gadgets**.
    Adjust size or scale and click **Save settings** to keep your placement and style.
    Use **Apply / reconnect** after changing connection or telemetry settings.
 
@@ -46,14 +46,15 @@ target. See [platform status](#platform-status) for platform limitations and
 
 ## HUD styles
 
-Choose **Classic** or **GT7-inspired** from **HUD style** at the top of the
+Choose **Classic** or **GT** from **HUD style** at the top of the
 **Gadgets** tab. Radar, gaps, and delta change immediately, and their cards preview
 the selected appearance. Speed dashboard and Fuel retain their reference designs
 in either style. Click **Save settings** to remember the selection;
 reconnecting LFS is unnecessary. Positions, scales, enabled gadgets, and
-position mode are retained. Classic remains the default for existing files.
+position mode are retained. GT is the default when no style is saved;
+an explicit Classic selection is retained.
 
-GT7-inspired uses transparent backgrounds, boxed driver positions, fading gap
+GT uses transparent backgrounds, boxed driver positions, fading gap
 rows, digital reference-time and signed delta cells, and a larger estimated-lap
 readout. It also adds a red directional player marker, blue opponent markers,
 and pale radar guides. Left/right sectors of the outer circle indicate nearby
@@ -69,10 +70,10 @@ without a BEST badge, trend meter, or gaining/losing footer. Ahead intervals
 display `+`, behind intervals display `−`. Enable **HUD debug information** in
 the Gadgets tab to show gap diagnostics such as **Building passage history**
 and **ESTIMATE** with measurement age. They are hidden by default in both
-Classic and GT7-inspired. The reference time and signed intervals
+Classic and GT. The reference time and signed intervals
 use milliseconds; this display precision does not change telemetry accuracy.
 
-GT7 colors, cell sizes, borders, offsets, and type sizes are centralized in
+GT colors, cell sizes, borders, offsets, and type sizes are centralized in
 [`gt7_style.rs`](../src/overlay/gt7_style.rs). Gap windows use a base size of
 320 × 106 logical pixels, and delta uses 440 × 132 before your scale is applied.
 Roboto and Azeret Mono are embedded for this theme, with
@@ -102,7 +103,7 @@ requires Windows 11 build 22621+ and applies its material across the window.
 Blur confined to these cells would require additional native compositor
 integration; this theme uses the requested grey-black fallback.
 
-![GT7-inspired gadget preview with sample telemetry](images/gt7-hud-preview.png)
+![GT gadget preview with sample telemetry](images/gt7-hud-preview.png)
 
 The preview uses the actual gadget painters at their base sizes, with sample
 driver/timing values to show both faster and slower delta states.
@@ -305,7 +306,7 @@ settled for 250 ms. **Side range (m)** changes zoom immediately throughout
 0–12 metres in both themes. Classic zooms uniformly: distance guides remain
 circular and car footprints keep their proportions. At tight zoom, distant
 front/rear cars can be outside the visible square; front/rear settings still
-control detection. GT7 adjusts horizontal placement independently, keeping
+control detection. GT adjusts horizontal placement independently, keeping
 vertical placement stable, compact arrow symbols, and decorative circular guides.
 Zero is a valid side range; detection still includes car-footprint padding.
 Use **Save settings**

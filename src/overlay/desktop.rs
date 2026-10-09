@@ -438,12 +438,12 @@ impl App {
                 } else {
                     match crate::setup::prepare_outgauge(std::path::Path::new(self.config.lfs_directory.trim()), &self.config)
                         .and_then(|plan| crate::setup::apply_outsim(&plan)) {
-                        Ok(result) => format!("OutGauge configured in {}. Start LFS and enable Speed dashboard or Fuel.", result.cfg_path.display()),
+                        Ok(result) => format!("OutGauge configured in {}. Start LFS and enable Speed dashboard, Fuel, or OutGauge forwarding.", result.cfg_path.display()),
                         Err(error) => error,
                     }
                 });
             }
-            ui.label(egui::RichText::new("OutGauge supplies Speed dashboard and Fuel through one UDP receiver. A backup is saved before changing cfg.txt.").small());
+            ui.label(egui::RichText::new("OutGauge supplies Speed dashboard, Fuel, and telemetry forwarding through one UDP receiver. A backup is saved before changing cfg.txt.").small());
             if let Some(message) = &self.setup_message { ui.label(message); }
             ui.label(egui::RichText::new("Save settings remembers the selected LFS folder.").small());
         });
@@ -803,6 +803,67 @@ impl App {
             )
             .small(),
         );
+        ui.add_space(12.0);
+        ui.heading("OutGauge forwarding");
+        let mut forwarding = !self.config.outgauge_forward.is_empty();
+        if ui
+            .checkbox(&mut forwarding, "Forward OutGauge to other apps")
+            .changed()
+        {
+            self.config.outgauge_forward.clear();
+            if forwarding {
+                self.config.outgauge_forward.push(std::net::SocketAddr::new(
+                    self.config.outgauge_bind.ip(),
+                    60000,
+                ));
+            }
+        }
+        if forwarding {
+            let mut remove = None;
+            for (index, destination) in self.config.outgauge_forward.iter_mut().enumerate() {
+                ui.push_id(index, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!("Destination {} port", destination.ip()));
+                        let mut port = destination.port();
+                        ui.add(egui::DragValue::new(&mut port).range(1..=65535));
+                        destination.set_port(port);
+                        if ui.button("Remove").clicked() {
+                            remove = Some(index);
+                        }
+                    });
+                });
+            }
+            if let Some(index) = remove {
+                self.config.outgauge_forward.remove(index);
+            }
+            if ui.button("Add destination").clicked() {
+                let port = self
+                    .config
+                    .outgauge_forward
+                    .last()
+                    .and_then(|address| address.port().checked_add(1))
+                    .unwrap_or(60000);
+                self.config.outgauge_forward.push(std::net::SocketAddr::new(
+                    self.config.outgauge_bind.ip(),
+                    port,
+                ));
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.label("OutGauge ID");
+                ui.add(egui::DragValue::new(&mut self.config.outgauge_id));
+            });
+            ui.label("All destinations receive the same packets and OutGauge ID.");
+            ui.label("For MOZA, use port 60000 and OutGauge ID 0. Close LFS and click Configure OutGauge to match these settings.");
+            ui.label("Forwarding works with gadgets disabled. Keep OpenRadar running.");
+            if let Some(error) = snapshot
+                .outgauge_forward_error
+                .as_ref()
+                .or(snapshot.outgauge_error.as_ref())
+            {
+                ui.colored_label(Color32::YELLOW, error);
+            }
+        }
+        ui.label("Apply / reconnect to use forwarding changes, then Save settings to keep them.");
         ui.add_space(12.0);
         self.startup_setup_controls(ui);
         ui.add_space(12.0);
@@ -1607,7 +1668,7 @@ mod tests {
                     Shape::Text(text)
                         if matches!(
                             text.galley.job.text.as_str(),
-                            "Classic" | "HUD debug information"
+                            "GT" | "HUD debug information"
                         ) =>
                     {
                         Some(text.visual_bounding_rect())
@@ -1923,6 +1984,7 @@ mod tests {
         ctx.set_embed_viewports(false);
         let mut config = Config {
             radar_enabled: false,
+            hud_style: HudStyle::Classic,
             ..Default::default()
         };
         config.gap_ahead.enabled = true;
@@ -2281,7 +2343,10 @@ mod tests {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
-        let mut config = Config::default();
+        let mut config = Config {
+            hud_style: HudStyle::Classic,
+            ..Default::default()
+        };
         config.performance_delta.enabled = true;
         config.gap_ahead.enabled = true;
         let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
@@ -2465,7 +2530,10 @@ mod tests {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
-        let config = Config::default();
+        let config = Config {
+            hud_style: HudStyle::Classic,
+            ..Default::default()
+        };
         let window = OverlayWindow::new(&config);
         let data = Arc::new(Mutex::new(OverlayData {
             source: OverlaySource::Disconnected,
