@@ -9,6 +9,10 @@ outsim_bind = "127.0.0.1:30000"
 # Optional Speed dashboard and Fuel telemetry; both share this UDP endpoint.
 outgauge_bind = "127.0.0.1:30001"
 outgauge_id = 24602
+# Optional UDP forwarding, active even with Speed dashboard and Fuel disabled.
+# For MOZA, set outgauge_id = 0 here and in LFS, then uncomment this line.
+# Add more addresses to send the same packets to other local telemetry apps.
+# outgauge_forward = ["127.0.0.1:60000", "127.0.0.1:60001"]
 # RPM bar starts alternating red/blue at this percentage (1..100).
 rpm_blink_threshold_percent = 95
 # Time per blink color (50..500 ms); lower values blink faster.

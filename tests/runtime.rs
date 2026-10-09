@@ -42,10 +42,101 @@ fn mock_lfs_fuel_only_receives_outgauge_on_separate_and_shared_ports() {
     mock_lfs(true, true, 10, true);
 }
 
+#[test]
+fn outgauge_forwarding_preserves_packets_without_gadgets_or_insim_handshake() {
+    for shared in [false, true] {
+        for id in [0_i32, 24602] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let outsim = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let gauge = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let receivers = [
+                UdpSocket::bind("127.0.0.1:0").unwrap(),
+                UdpSocket::bind("127.0.0.1:0").unwrap(),
+            ];
+            for receiver in &receivers {
+                receiver
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .unwrap();
+            }
+            let config = Config {
+                insim_address: listener.local_addr().unwrap(),
+                outsim_bind: outsim.local_addr().unwrap(),
+                outgauge_bind: if shared {
+                    outsim.local_addr().unwrap()
+                } else {
+                    gauge.local_addr().unwrap()
+                },
+                outgauge_id: id,
+                outgauge_forward: receivers
+                    .iter()
+                    .map(|socket| socket.local_addr().unwrap())
+                    .collect(),
+                ..Default::default()
+            };
+            assert!(!config.speed_dashboard.enabled && !config.fuel.enabled);
+            let destination = config.outgauge_bind;
+            drop(outsim);
+            drop(gauge);
+            let runtime = Runtime::start(config).unwrap();
+            let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let mut bytes = vec![0; if id == 0 { 92 } else { 96 }];
+            bytes[4..8].copy_from_slice(b"XFG\0");
+            bytes[10] = 3;
+            bytes[16..20].copy_from_slice(&6400_f32.to_le_bytes());
+            bytes[28..32].copy_from_slice(&0.5_f32.to_le_bytes());
+            if id != 0 {
+                bytes[92..96].copy_from_slice(&id.to_le_bytes());
+            }
+            let mut buffer = [0; 1024];
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                sender.send_to(&bytes, destination).unwrap();
+                if let Ok(size) = receivers[0].recv(&mut buffer) {
+                    assert_eq!(&buffer[..size], bytes);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "no forwarded OutGauge packet");
+            }
+            let size = receivers[1].recv(&mut buffer).unwrap();
+            assert_eq!(&buffer[..size], bytes);
+            assert!(!runtime.snapshot().connected);
+            // Invalid telemetry, wrong IDs, and OutSim must not reach the other app.
+            let mut invalid = bytes.clone();
+            invalid[16..20].copy_from_slice(&f32::NAN.to_le_bytes());
+            sender.send_to(&invalid, destination).unwrap();
+            sender
+                .send_to(&bytes[..bytes.len() - 1], destination)
+                .unwrap();
+            if id != 0 {
+                invalid = bytes.clone();
+                invalid[92..96].copy_from_slice(&(id + 1).to_le_bytes());
+                sender.send_to(&invalid, destination).unwrap();
+            }
+            if shared {
+                sender
+                    .send_to(&full_outsim(20, 0.0, 0.0, 0.0), destination)
+                    .unwrap();
+            }
+            sender.send_to(&bytes, destination).unwrap();
+            for receiver in &receivers {
+                receiver
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let size = receiver.recv(&mut buffer).unwrap();
+                assert_eq!(&buffer[..size], bytes);
+            }
+        }
+    }
+}
+
 fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let udp_reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
     let gauge_reservation = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let forward_receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+    forward_receiver
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     let config = Config {
         outgauge_bind: if shared {
             udp_reservation.local_addr().unwrap()
@@ -53,6 +144,11 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
             gauge_reservation.local_addr().unwrap()
         },
         outgauge_id: if shared { 1 } else { 24602 },
+        outgauge_forward: if shared {
+            vec![forward_receiver.local_addr().unwrap()]
+        } else {
+            Vec::new()
+        },
         speed_dashboard: GapSettings {
             enabled: !fuel_only,
             ..Default::default()
@@ -224,6 +320,14 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     assert_eq!(dashboard.rpm, 6400.0);
     assert!((live.fuel.fraction.unwrap() - 0.14).abs() < 0.00001);
     assert_ne!(dashboard.lights & outgauge::ENGINE_SEVERE, 0);
+    if shared {
+        let mut bytes = [0; 1024];
+        let size = forward_receiver.recv(&mut bytes).unwrap();
+        let forwarded = outgauge::decode(&bytes[..size], gauge_id).unwrap();
+        assert_eq!(forwarded.rpm, dashboard.rpm);
+        assert_eq!(forwarded.fuel, dashboard.fuel);
+        assert!(live.outgauge_forward_error.is_none());
+    }
     assert_eq!(live.frame.cars.len(), 1);
     assert_eq!(live.version, "0.7G");
     assert_eq!(live.malformed_packets, 0);

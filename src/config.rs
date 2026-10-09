@@ -69,6 +69,12 @@ pub struct Config {
     pub outgauge_bind: SocketAddr,
     /// Zero selects the 92-byte OutGauge packet without an ID.
     pub outgauge_id: i32,
+    /// Copy valid OutGauge packets unchanged to other local telemetry apps.
+    #[serde(
+        deserialize_with = "forward_destinations",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub outgauge_forward: Vec<SocketAddr>,
     pub cars: BTreeMap<String, CarProfile>,
     pub speed_dashboard: GapSettings,
     pub fuel: GapSettings,
@@ -111,6 +117,22 @@ pub struct Config {
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct InSimPassword(pub String);
+
+fn forward_destinations<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<SocketAddr>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Destinations {
+        One(SocketAddr),
+        Many(Vec<SocketAddr>),
+    }
+    Ok(match Destinations::deserialize(deserializer)? {
+        Destinations::One(address) => vec![address],
+        Destinations::Many(addresses) => addresses,
+    })
+}
+
 impl std::fmt::Debug for InSimPassword {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("[redacted]")
@@ -126,6 +148,7 @@ impl Default for Config {
             outsim_bind: "127.0.0.1:30000".parse().unwrap(),
             outgauge_bind: "127.0.0.1:30001".parse().unwrap(),
             outgauge_id: 24602,
+            outgauge_forward: Vec::new(),
             cars: BTreeMap::from([(
                 "XFG".into(),
                 CarProfile {
@@ -215,7 +238,7 @@ impl Config {
         (self.outsim_id != 0).then_some(self.outsim_id)
     }
     pub fn needs_outgauge(&self) -> bool {
-        self.speed_dashboard.enabled || self.fuel.enabled
+        self.speed_dashboard.enabled || self.fuel.enabled || !self.outgauge_forward.is_empty()
     }
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -288,6 +311,22 @@ impl Config {
         }
         if !self.outgauge_bind.ip().is_loopback() || self.outgauge_bind.port() == 0 {
             return Err("OutGauge requires a nonzero loopback UDP endpoint".into());
+        }
+        for destination in &self.outgauge_forward {
+            if !destination.ip().is_loopback()
+                || destination.port() == 0
+                || destination.is_ipv4() != self.outgauge_bind.is_ipv4()
+            {
+                return Err(
+                    "outgauge forwarding requires a nonzero loopback destination with the receiver's IP family".into(),
+                );
+            }
+            if *destination == self.outgauge_bind || *destination == self.outsim_bind {
+                return Err(
+                    "outgauge forwarding destination must differ from OpenRadar's UDP receivers"
+                        .into(),
+                );
+            }
         }
         self.overlay_toggle_key()?;
         crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;

@@ -233,6 +233,45 @@ For connection diagnostics, run OpenRadar with `--headless --seconds 10`
 this prints its status, latest sample, age, and any OutGauge errors. Close the
 desktop app first so the diagnostic process can bind the telemetry socket.
 
+## OutGauge forwarding
+
+OpenRadar can copy OutGauge packets to other local telemetry apps while using
+the same stream for Speed dashboard and Fuel. Forwarding also works with both
+gadgets disabled and does not require an InSim connection.
+
+For a MOZA wheel, open **Settings**, enable **Forward OutGauge to other apps**,
+and use destination port `60000` and **OutGauge ID** `0`. Close LFS and click
+**Configure OutGauge** to send its telemetry to OpenRadar. Click **Apply /
+reconnect** and **Save settings**, then start LFS and MOZA Pit House.
+Keep OpenRadar running while driving.
+
+The equivalent top-level TOML settings are:
+
+~~~toml
+outgauge_bind = "127.0.0.1:30001"
+outgauge_id = 0
+outgauge_forward = ["127.0.0.1:60000"]
+~~~
+
+Click **Add destination** for each additional app and set its listening port.
+For example, two destinations can use
+`outgauge_forward = ["127.0.0.1:60000", "127.0.0.1:60001"]`.
+Existing single-address settings such as
+`outgauge_forward = "127.0.0.1:60000"` still load; saving writes an array.
+An empty array disables forwarding. Every destination receives the same packet
+bytes and ID; one send failure does not skip the other destinations.
+
+LFS's `cfg.txt` must use `OutGauge Port 30001`, `OutGauge IP 127.0.0.1`,
+`OutGauge Mode 1`, and `OutGauge ID 0`. MOZA receives the forwarded packets on
+port `60000`. Its [LFS setup guide](https://support.mozaracing.com/en/support/solutions/articles/70000628538-live-for-speed)
+requires ID `0`, which omits the optional identifier from each packet.
+
+Packets retain their original bytes, including an ID when configured. The
+destination must be a nonzero loopback endpoint with the same IP family as the
+OutGauge receiver and must differ from OpenRadar's UDP receivers. Remove
+`outgauge_forward` or clear the checkbox to disable forwarding. OutSim setup
+continues to use its own configured destination.
+
 ## Fuel
 
 Enable **Fuel** in Gadgets after configuring [OutGauge](#speed-dashboard). Fuel
