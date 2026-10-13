@@ -164,7 +164,9 @@ Enable the gap gadgets from their cards, turn on each card's **Position mode**,
 and drag that gadget's title bar anywhere on the desktop. Turn Position mode off
 to restore its borderless, mouse click-through display. Each gap also has screen
 X/Y controls, a **Move gadget** handle in Position mode, and a Scale control.
-**Save settings** persists each window's screen coordinates and scale.
+**Save settings** persists each window's screen coordinates and scale. Linux
+builds use X11, including XWayland on KDE Wayland, because native Wayland cannot
+read or restore absolute window positions.
 Existing TOML files retain their radar settings and default to radar enabled,
 with both new gap gadgets disabled. Earlier normalized gap X/Y values are
 migrated to screen coordinates; future saves use `window_x` and `window_y` in
@@ -342,9 +344,11 @@ freezes, see the [troubleshooting guide](troubleshooting.md).
   acceptance testing. Running the binary needs X11 libraries and working
   Vulkan/OpenGL drivers. Building from source additionally needs a C/C++
   compiler, pkg-config, and X11/Wayland development libraries.
-- **Wayland:** reliable stacking above a game needs compositor-specific work or
-  a layer-shell backend. The current ordinary-window prototype does not promise
-  this support.
+- **Wayland desktops (including KDE):** OpenRadar uses XWayland for window
+  positioning. XWayland and a working `DISPLAY` are required; native Wayland
+  windows cannot save or restore absolute positions. Placement, transparency,
+  stacking above a game, and click-through on KDE/XWayland still need acceptance
+  testing.
 - **Exclusive fullscreen / Gamescope:** unverified.
 
 Foreground detection is implemented on Windows only. Other desktops expose

@@ -1863,6 +1863,159 @@ mod tests {
     }
 
     #[test]
+    fn native_gadget_positions_survive_save_settings_and_restart() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.set_embed_viewports(false);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("openradar-positions-{stamp}.toml"));
+        let mut config = Config {
+            overlay_size: 440.0,
+            ..Default::default()
+        };
+        for (index, settings) in [
+            &mut config.gap_ahead,
+            &mut config.gap_behind,
+            &mut config.performance_delta,
+            &mut config.speed_dashboard,
+            &mut config.fuel,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            settings.enabled = index % 2 == 0;
+            settings.scale = 0.5 + index as f32 * 0.25;
+        }
+        let mut app = App::new(config, path.clone(), true, None, None);
+        let initial = app.overlay_window.builder(true, false).position;
+        let initial_gaps: Vec<_> = app
+            .gap_overlays
+            .iter()
+            .map(|gap| {
+                gap.window
+                    .builder("test", true, false, Vec2::splat(100.0))
+                    .position
+            })
+            .collect();
+        let positions = [
+            Pos2::new(-1000.0, 140.0),
+            Pos2::new(120.0, 180.0),
+            Pos2::new(360.0, 240.0),
+            Pos2::new(620.0, 300.0),
+            Pos2::new(900.0, 360.0),
+            Pos2::new(1200.0, 420.0),
+        ];
+        // Exercise native viewport geometry -> shared paint feedback -> config.
+        // A missing OS position must retain the last observed coordinates.
+        for (index, position) in positions.into_iter().enumerate() {
+            let id = ViewportId::from_hash_of(("position-regression", index));
+            let data = app.overlay_data.lock().unwrap().clone();
+            let feedback = if index == 0 {
+                &app.overlay_feedback
+            } else {
+                &app.gap_overlays[index - 1].feedback
+            };
+            for outer_rect in [
+                Some(Rect::from_min_size(position, Vec2::splat(100.0))),
+                None,
+            ] {
+                let mut input = egui::RawInput {
+                    viewport_id: id,
+                    ..Default::default()
+                };
+                input.viewports.insert(
+                    id,
+                    egui::ViewportInfo {
+                        parent: Some(ViewportId::ROOT),
+                        outer_rect,
+                        ..Default::default()
+                    },
+                );
+                let _ = ctx.run(input, |child| overlay_painted(child, &data, feedback));
+            }
+        }
+        let mut output = egui::FullOutput::default();
+        for _ in 0..6 {
+            output = ctx.run(egui::RawInput::default(), |ctx| {
+                app.receive_overlay_feedback();
+                app.control_panel(ctx, &Snapshot::default());
+            });
+        }
+        let save = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == "Save settings" => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        for pressed in [true, false] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(save),
+                        egui::Event::PointerButton {
+                            pos: save,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| {
+                    app.receive_overlay_feedback();
+                    app.control_panel(ctx, &Snapshot::default());
+                },
+            );
+        }
+        let restored = Config::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(
+            Pos2::new(restored.overlay_x, restored.overlay_y),
+            positions[0]
+        );
+        assert!(restored.radar_enabled);
+        assert_eq!(restored.overlay_size, 440.0);
+        assert_eq!(
+            OverlayWindow::new(&restored).builder(true, false).position,
+            Some(positions[0])
+        );
+        assert_eq!(app.overlay_window.builder(true, false).position, initial);
+        for (index, settings) in [
+            &restored.gap_ahead,
+            &restored.gap_behind,
+            &restored.performance_delta,
+            &restored.speed_dashboard,
+            &restored.fuel,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(settings.window_x, Some(positions[index + 1].x));
+            assert_eq!(settings.window_y, Some(positions[index + 1].y));
+            assert_eq!(settings.enabled, index % 2 == 0);
+            assert_eq!(settings.scale, 0.5 + index as f32 * 0.25);
+            let size = Vec2::splat(100.0);
+            let builder = GapWindow::new(settings).builder("test", true, false, size);
+            assert_eq!(builder.position, Some(positions[index + 1]));
+            assert_eq!(builder.inner_size, Some(size * settings.scale));
+            assert_eq!(
+                app.gap_overlays[index]
+                    .window
+                    .builder("test", true, false, size)
+                    .position,
+                initial_gaps[index]
+            );
+        }
+    }
+
+    #[test]
     fn gap_panels_fit_their_own_viewport_at_extreme_scales() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);

@@ -8,10 +8,13 @@ extract it into a writable folder. Archives include the example configuration
 and documentation. Raw executables are also available.
 
 Windows requires the Microsoft Visual C++ x64 runtime. Linux requires glibc 2.35
-or newer, X11 libraries, and suitable Vulkan/OpenGL drivers. See the
+or newer, X11 libraries, and suitable Vulkan/OpenGL drivers. On Wayland desktops
+(including KDE), OpenRadar uses XWayland to save and restore gadget positions;
+XWayland must be available and `DISPLAY` must point to its X server. Native
+Wayland windows do not support this placement. See the
 [runtime requirements](release-notes-v0.2.md#downloads-and-startup) and
-[platform status](usage.md#platform-status). Wayland, Gamescope, and exclusive
-fullscreen overlay behavior remain unverified.
+[platform status](usage.md#platform-status). KDE/XWayland overlay behavior over
+a game, Gamescope, and exclusive fullscreen remain unverified.
 
 ## First configuration
 
