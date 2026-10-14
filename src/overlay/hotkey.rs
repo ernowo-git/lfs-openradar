@@ -1,4 +1,4 @@
-//! Observe the configured key without consuming keyboard input meant for LFS.
+//! Toggle shared visibility through Windows polling or KDE global shortcuts.
 use std::{
     sync::{
         Arc,
@@ -11,9 +11,52 @@ pub(super) struct OverlayHotkey {
     presses: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    #[cfg(target_os = "linux")]
+    error: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl OverlayHotkey {
+    #[cfg(target_os = "linux")]
+    pub fn start(key: u8, ctx: eframe::egui::Context) -> Result<Self, String> {
+        use std::{thread, time::Duration};
+        let registration = kde::Registration::new(key)
+            .map_err(|e| format!("could not register KDE overlay shortcut: {e}"))?;
+        let presses = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let error = Arc::new(std::sync::Mutex::new(None));
+        let queued = presses.clone();
+        let stopping = stop.clone();
+        let failed = error.clone();
+        registration
+            .listen(queued, ctx.clone(), error.clone())
+            .map_err(|e| format!("could not listen for KDE overlay shortcut: {e}"))?;
+        let worker = thread::Builder::new()
+            .name("overlay-hotkey".into())
+            .spawn(move || {
+                let report = |message| {
+                    *failed.lock().unwrap() = Some(message);
+                    ctx.request_repaint();
+                };
+                while !stopping.load(Ordering::Relaxed) {
+                    if let Err(e) = registration.connection.process(Duration::from_millis(100)) {
+                        report(format!("kde overlay shortcut connection failed: {e}"));
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| format!("could not start overlay hotkey: {e}"))?;
+        Ok(Self {
+            presses,
+            stop,
+            worker: Some(worker),
+            error,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn error(&self) -> Option<String> {
+        self.error.lock().unwrap().clone()
+    }
     #[cfg(windows)]
     pub fn start(key: u8, ctx: eframe::egui::Context) -> Result<Self, String> {
         use std::{thread, time::Duration};
@@ -62,6 +105,158 @@ impl OverlayHotkey {
             presses,
             stop: Arc::new(AtomicBool::new(false)),
             worker: None,
+            #[cfg(target_os = "linux")]
+            error: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod kde {
+    use super::*;
+    use dbus::{blocking::Connection, message::MatchRule};
+    use std::time::Duration;
+
+    const SERVICE: &str = "org.kde.kglobalaccel";
+    const INTERFACE: &str = "org.kde.KGlobalAccel";
+    const COMPONENT: &str = "lfs-openradar";
+    const ACTION: &str = "toggle-overlays";
+
+    pub(super) struct Registration {
+        pub connection: Connection,
+        action: Vec<String>,
+        path: dbus::Path<'static>,
+    }
+
+    impl Registration {
+        pub fn new(key: u8) -> Result<Self, String> {
+            let connection = Connection::new_session().map_err(|e| e.to_string())?;
+            let bus = connection.with_proxy(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                Duration::from_secs(2),
+            );
+            let (available,): (bool,) = bus
+                .method_call("org.freedesktop.DBus", "NameHasOwner", (SERVICE,))
+                .map_err(|e| e.to_string())?;
+            if !available {
+                return Err(
+                    "KDE global shortcut service unavailable; shortcut works in the panel only"
+                        .into(),
+                );
+            }
+            let owner = connection
+                .request_name("space.ctrlchsr.OpenRadar.Shortcuts", false, false, true)
+                .map_err(|e| e.to_string())?;
+            if owner
+                != dbus::blocking::stdintf::org_freedesktop_dbus::RequestNameReply::PrimaryOwner
+            {
+                return Err("another OpenRadar instance owns the global shortcut".into());
+            }
+            let qt_key = match key {
+                0x1b => 0x01000000,
+                0x09 => 0x01000001,
+                0x08 => 0x01000003,
+                0x0d => 0x01000004,
+                0x2d => 0x01000006,
+                0x2e => 0x01000007,
+                0x24 => 0x01000010,
+                0x23 => 0x01000011,
+                0x21 => 0x01000012,
+                0x22 => 0x01000013,
+                0x70..=0x87 => 0x01000030 + i32::from(key - 0x70),
+                _ => i32::from(key),
+            };
+            let proxy = connection.with_proxy(SERVICE, "/kglobalaccel", Duration::from_secs(2));
+            let (available,): (bool,) = proxy
+                .method_call(INTERFACE, "isGlobalShortcutAvailable", (qt_key, COMPONENT))
+                .map_err(|e| e.to_string())?;
+            if !available {
+                return Err("key is already assigned to another KDE action; change overlay_toggle_key and restart".into());
+            }
+            let action: Vec<String> = [COMPONENT, ACTION, "OpenRadar", "Show/hide overlays"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+            let (): () = proxy
+                .method_call(INTERFACE, "doRegister", (action.clone(),))
+                .map_err(|e| e.to_string())?;
+            // The guard unregisters even when binding or subscription fails.
+            let mut registration = Self {
+                connection,
+                action,
+                path: dbus::Path::from("/"),
+            };
+            let proxy = registration.connection.with_proxy(
+                SERVICE,
+                "/kglobalaccel",
+                Duration::from_secs(2),
+            );
+            let (path,): (dbus::Path<'static>,) = proxy
+                .method_call(INTERFACE, "getComponent", (COMPONENT,))
+                .map_err(|e| e.to_string())?;
+            registration.path = path;
+            // SetPresent | NoAutoloading: the TOML setting is authoritative.
+            let (keys,): (Vec<i32>,) = proxy
+                .method_call(
+                    INTERFACE,
+                    "setShortcut",
+                    (registration.action.clone(), vec![qt_key], 6u32),
+                )
+                .map_err(|e| e.to_string())?;
+            if keys != [qt_key] {
+                return Err(
+                    "KDE could not bind the configured key; change overlay_toggle_key and restart"
+                        .into(),
+                );
+            }
+            Ok(registration)
+        }
+
+        pub fn listen(
+            &self,
+            queued: Arc<AtomicUsize>,
+            ctx: eframe::egui::Context,
+            error: Arc<std::sync::Mutex<Option<String>>>,
+        ) -> Result<(), dbus::Error> {
+            let repaint = ctx.clone();
+            let rule =
+                MatchRule::new_signal("org.kde.kglobalaccel.Component", "globalShortcutPressed")
+                    .with_sender(SERVICE)
+                    .with_path(self.path.clone());
+            self.connection.add_match(
+                rule,
+                move |(component, action, _timestamp): (String, String, i64), _, _| {
+                    if component == COMPONENT && action == ACTION {
+                        queued.fetch_add(1, Ordering::Relaxed);
+                        ctx.request_repaint();
+                    }
+                    true
+                },
+            )?;
+            // KDE emits held-key repeats separately; only presses are subscribed.
+            self.connection.add_match(
+                MatchRule::new_signal("org.freedesktop.DBus", "NameOwnerChanged")
+                    .with_sender("org.freedesktop.DBus"),
+                move |(name, _old, _new): (String, String, String), _, _| {
+                    if name == SERVICE {
+                        *error.lock().unwrap() = Some("kde global shortcut service restarted; shortcut works in the panel only".into());
+                        repaint.request_repaint();
+                    }
+                    true
+                },
+            )?;
+            Ok(())
+        }
+    }
+
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            let proxy =
+                self.connection
+                    .with_proxy(SERVICE, "/kglobalaccel", Duration::from_secs(1));
+            let _: Result<(bool,), _> =
+                proxy.method_call(INTERFACE, "unregister", (COMPONENT, ACTION));
         }
     }
 }

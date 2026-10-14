@@ -18,3 +18,17 @@
 - Build a Windows `.exe` and a Linux amd64 (x86_64) binary for every release, subject to the WSL availability rule below.
 - To build the Linux binary, list the available WSL distributions and use an available distribution. If none is available, skip the Linux build and tell the user to handle it manually.
 - Use the same version format for Git tags and release names: `vMAJOR.MINOR.PATCH`, for example `v0.1.0`, `v0.2.1`, or `v0.3.0`.
+
+## Agent skills
+
+### Issue tracker
+
+Tickets and specs live in the self-hosted Plane Race Hub project (RAC), workspace `sampingan`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels in Plane. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.

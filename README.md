@@ -5,7 +5,9 @@ a speed and indicator dashboard, fuel range and refuelling estimates,
 estimated gaps to the cars ahead and behind,
 and a real-time performance delta
 against your best clean lap in the current session. Each gadget has its own
-window, position, scale, and visibility settings.
+position, scale, and visibility settings. Automatic backend selection uses the
+native Wayland HUD on supported KDE/KWin sessions and independent gadget windows
+elsewhere. You can also choose either backend explicitly.
 
 It connects to your local LFS client through InSim, OutSim, and OutGauge. Regular players
 can use it in multiplayer without the server's admin password. Windows is the
@@ -47,6 +49,7 @@ See the [installation guide](docs/installation.md) for details.
 - [Usage](docs/usage.md): quick start, gadget behavior, and platform status.
 - [Development](docs/development.md): prerequisites, building, and testing.
 - [Configuration](docs/configuration.md): config paths, passwords, and telemetry settings.
+- [Native Wayland HUD](docs/native-wayland.md): KDE/KWin launch, monitor selection, and verification limits.
 - [LFS startup setup](docs/lfs-startup-setup.md): automatic InSim, backups, and port conflicts.
 - [Troubleshooting](docs/troubleshooting.md): connection, positioning, and graphics issues.
 - [CI and releases](docs/ci-and-releases.md): checks, version bumps, builds, and recovery.

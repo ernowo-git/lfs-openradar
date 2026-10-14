@@ -18,8 +18,20 @@ image = { version = "=0.25.8", optional = true, default-features = false, featur
 log = { version = "=0.4.34", optional = true, features = ["std"] }
 
 [features]
-default = ["desktop"]
-desktop = ["dep:eframe", "dep:wgpu", "dep:image", "dep:log", "dep:egui_extras"]
+default = ["desktop", "native-wayland"]
+desktop = ["dep:eframe", "dep:wgpu", "dep:image", "dep:log", "dep:egui_extras", "dep:dbus"]
+wayland-mvp = ["dep:smithay-client-toolkit", "dep:wayland-client"]
+native-wayland = ["desktop", "dep:smithay-client-toolkit", "dep:wayland-client", "wayland-client/system", "dep:pollster"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = { version = "=0.9.12", optional = true, features = ["vendored"] }
+smithay-client-toolkit = { version = "=0.20.0", optional = true, default-features = false, features = ["calloop"] }
+wayland-client = { version = "=0.31.15", optional = true }
+pollster = { version = "=0.4.0", optional = true }
+
+[[example]]
+name = "wayland-overlay"
+required-features = ["wayland-mvp"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_Storage_FileSystem"] }

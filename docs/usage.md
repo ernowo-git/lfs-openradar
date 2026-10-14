@@ -15,7 +15,7 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
 1. Start LFS and drive your own car in cockpit or custom view. Confirm that the
    MCI and OutSim age indicators are updating.
 2. Enable **Show overlays** in **Settings**, then enable the cards you want
-   in **Gadgets**. On Windows, press **Insert** to toggle all overlays while driving.
+   in **Gadgets**. On Windows or Linux KDE, press **Insert** to toggle all overlays while driving.
    Change `overlay_toggle_key` in your TOML file to use another key.
 3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
    turn Position mode off to restore the transparent, click-through overlay.
@@ -159,14 +159,19 @@ display delay. The default is 60 ms; 0 ms uses the latest time shared by MCI
 and OutSim. It does not predict future positions. Click **Apply / reconnect**
 after changing interpolation in live mode.
 
-Each gadget has a separate transparent overlay window.
+With the window backend, each gadget has a separate transparent overlay window.
 Enable the gap gadgets from their cards, turn on each card's **Position mode**,
 and drag that gadget's title bar anywhere on the desktop. Turn Position mode off
 to restore its borderless, mouse click-through display. Each gap also has screen
 X/Y controls, a **Move gadget** handle in Position mode, and a Scale control.
 **Save settings** persists each window's screen coordinates and scale. Linux
-builds use X11, including XWayland on KDE Wayland, because native Wayland cannot
+window-backend builds use X11, including XWayland on KDE Wayland, because native Wayland cannot
 read or restore absolute window positions.
+The [native Wayland backend](native-wayland.md) groups enabled gadgets on one
+selected monitor, with separate saved monitor-relative placement and panel-only
+movement controls. Auto selects this backend on supported KDE/KWin Wayland
+sessions and Window elsewhere. Saved explicit choices remain overrides; choose
+Auto in Settings and restart to enable detection.
 Existing TOML files retain their radar settings and default to radar enabled,
 with both new gap gadgets disabled. Earlier normalized gap X/Y values are
 migrated to screen coordinates; future saves use `window_x` and `window_y` in
@@ -177,8 +182,12 @@ on secondary monitors, including negative X/Y, are retained.
 
 **Show overlays** controls all windows, and each card's Enabled setting controls
 its own gadget. Closing a gadget window in Position mode disables that gadget.
-Press **Insert** to toggle **Show overlays**. On Windows this also works while
-LFS has focus; on other desktop backends the control panel must have focus.
+Press **Insert** to toggle **Show overlays**. On Windows and Linux KDE/KWin this
+also works while LFS has focus, with either overlay backend. KDE registers the
+configured key with its global shortcut service while OpenRadar is running.
+On other Linux desktops, the control panel must have focus. If KDE registration
+fails, **Settings** shows a warning and the shortcut remains available in the
+panel. Conflicting KDE shortcuts are preserved; select another key and restart.
 Holding the key toggles once until you release it. The shortcut uses an
 unmodified key and follows the same background-hiding and Position mode rules
 as the checkbox. Individual gadget Enabled settings and telemetry recording
@@ -196,6 +205,9 @@ Supported names are `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`,
 through `Z`, and digits `0` through `9`. Names are case-insensitive. For example,
 use `"F8"` to change the key or `"None"` to disable the shortcut. Existing
 configuration files that omit this setting default to `"Insert"`.
+KDE reserves the selected key while OpenRadar runs; choose a key you do not
+need for driving controls. Closing OpenRadar releases the shortcut. If KDE's
+shortcut service restarts, restart OpenRadar to restore the global binding.
 
 The radar retains its own size and position when gaps are enabled or moved.
 All windows share one telemetry connection, but repaint independently; hidden
@@ -344,11 +356,13 @@ freezes, see the [troubleshooting guide](troubleshooting.md).
   acceptance testing. Running the binary needs X11 libraries and working
   Vulkan/OpenGL drivers. Building from source additionally needs a C/C++
   compiler, pkg-config, and X11/Wayland development libraries.
-- **Wayland desktops (including KDE):** OpenRadar uses XWayland for window
-  positioning. XWayland and a working `DISPLAY` are required; native Wayland
-  windows cannot save or restore absolute positions. Placement, transparency,
-  stacking above a game, and click-through on KDE/XWayland still need acceptance
-  testing.
+- **KDE/KWin Wayland:** Auto selects the
+  [native Wayland HUD](native-wayland.md) when Layer Shell is available. It uses a retained
+  XWayland panel and separate monitor-relative saved placement. Native GPU demo
+  startup, six-gadget/panel coexistence, and recovery tests pass locally;
+  fullscreen LFS, actual input passthrough, fractional-scale sharpness, and
+  physical monitor hotplug still need live acceptance. XWayland and `DISPLAY`
+  remain required for the panel.
 - **Exclusive fullscreen / Gamescope:** unverified.
 
 Foreground detection is implemented on Windows only. Other desktops expose

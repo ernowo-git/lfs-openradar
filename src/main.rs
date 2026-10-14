@@ -1,4 +1,8 @@
-use lfs_openradar::{config::Config, demo::Demo, runtime::Runtime};
+use lfs_openradar::{
+    config::{Config, OverlayBackend},
+    demo::Demo,
+    runtime::Runtime,
+};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -6,6 +10,7 @@ use std::{
 
 #[derive(Default)]
 struct Options {
+    overlay_backend: Option<OverlayBackend>,
     config: Option<PathBuf>,
     demo: bool,
     headless: bool,
@@ -21,9 +26,20 @@ fn options() -> Result<Option<Options>, String> {
                 println!(
                     "LFS OpenRadar\n\n  --demo                 Synthetic radar preview, no sockets\n  --headless             Console telemetry diagnostics\n  --config PATH          Load a TOML configuration\n  --seconds N            Exit after N seconds (1..3600)\n  --screenshot PATH      Save the demo control-panel preview as PNG\n\nDefault: native control panel; reads openradar.local.toml if present.\nInSim/MCI and OutSim are both required for live radar output."
                 );
+                println!(
+                    "  --overlay-backend NAME Choose auto (default), window, or wayland (Linux/KDE); overrides the saved choice."
+                );
                 return Ok(None);
             }
             "--demo" => result.demo = true,
+            "--overlay-backend" => {
+                result.overlay_backend = Some(match args.next().as_deref() {
+                    Some("auto") => OverlayBackend::Auto,
+                    Some("window") => OverlayBackend::Window,
+                    Some("wayland") => OverlayBackend::Wayland,
+                    _ => return Err("--overlay-backend requires auto, window, or wayland".into()),
+                });
+            }
             "--headless" => result.headless = true,
             "--config" => {
                 result.config = Some(PathBuf::from(args.next().ok_or("--config needs a path")?))
@@ -62,11 +78,14 @@ fn run() -> Result<(), String> {
     let path = options
         .config
         .unwrap_or_else(|| PathBuf::from("openradar.local.toml"));
-    let config = if explicit_config || path.exists() {
+    let mut config = if explicit_config || path.exists() {
         Config::load(&path)?
     } else {
         Config::default()
     };
+    if let Some(backend) = options.overlay_backend {
+        config.overlay_backend = backend;
+    }
     config.validate()?;
     if options.headless {
         let runtime = if options.demo {
