@@ -19,10 +19,14 @@ mod graphics_log;
 mod gt7_style;
 #[cfg(feature = "desktop")]
 mod hotkey;
+#[cfg(all(target_os = "linux", feature = "native-wayland"))]
+pub mod native;
 #[cfg(feature = "desktop")]
 mod radar_style;
 #[cfg(feature = "desktop")]
 mod render;
+#[cfg(feature = "desktop")]
+pub mod session;
 #[cfg(feature = "desktop")]
 mod speed_dashboard;
 #[cfg(feature = "desktop")]

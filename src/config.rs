@@ -1,6 +1,53 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, net::SocketAddr, path::Path};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum OverlayBackend {
+    #[default]
+    Auto,
+    Window,
+    Wayland,
+}
+impl OverlayBackend {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto (recommended)",
+            Self::Window => "Window (Windows / X11)",
+            Self::Wayland => "Native Wayland",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GadgetPlacement {
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub scale: f32,
+}
+impl Default for GadgetPlacement {
+    fn default() -> Self {
+        Self {
+            x: None,
+            y: None,
+            scale: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WaylandSettings {
+    pub monitor: Option<String>,
+    pub radar: GadgetPlacement,
+    pub gap_ahead: GadgetPlacement,
+    pub gap_behind: GadgetPlacement,
+    pub performance_delta: GadgetPlacement,
+    pub speed_dashboard: GadgetPlacement,
+    pub fuel: GadgetPlacement,
+}
+
 /// Built-in overlay appearance, independent of the desktop renderer.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -62,6 +109,8 @@ pub struct CarProfile {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub overlay_backend: OverlayBackend,
+    pub wayland: WaylandSettings,
     pub insim_address: SocketAddr,
     pub insim_password: InSimPassword,
     /// Folder containing the user's LFS.exe; only the setup button edits LFS.
@@ -144,6 +193,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             insim_address: "127.0.0.1:29999".parse().unwrap(),
+            overlay_backend: OverlayBackend::default(),
+            wayland: WaylandSettings::default(),
             insim_password: InSimPassword::default(),
             lfs_directory: String::new(),
             outsim_bind: "127.0.0.1:30000".parse().unwrap(),
@@ -287,6 +338,40 @@ impl Config {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        for (index, placement) in [
+            &self.wayland.radar,
+            &self.wayland.gap_ahead,
+            &self.wayland.gap_behind,
+            &self.wayland.performance_delta,
+            &self.wayland.speed_dashboard,
+            &self.wayland.fuel,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let range = if index == 0 {
+                220.0 / 320.0..=800.0 / 320.0
+            } else {
+                0.5..=2.0
+            };
+            if [placement.x, placement.y]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+                || !placement.scale.is_finite()
+                || !range.contains(&placement.scale)
+            {
+                return Err("wayland positions must be finite and gadget scales within their supported range".into());
+            }
+        }
+        if self
+            .wayland
+            .monitor
+            .as_ref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            return Err("wayland monitor name must not be empty".into());
+        }
         if !(1..=100).contains(&self.rpm_blink_threshold_percent) {
             return Err("rpm_blink_threshold_percent must be 1..100".into());
         }

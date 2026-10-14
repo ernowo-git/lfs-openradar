@@ -1,4 +1,5 @@
 # Local LFS client. Enable its listener by typing /insim 29999 in LFS.
+overlay_backend = "auto" # or "window" / "wayland" to override; see docs/native-wayland.md
 insim_address = "127.0.0.1:29999"
 # Local LFS Game Admin password (plain text). LFS_INSIM_ADMIN overrides it at launch.
 insim_password = ""

@@ -57,6 +57,18 @@ chosen config path. See [troubleshooting](troubleshooting.md) for log details.
 
 ## HUD appearance
 
+The default `overlay_backend = "auto"` selects the grouped native HUD on Linux
+KDE/KWin Wayland when the compositor advertises Layer Shell. Windows, Linux X11,
+other desktops, unavailable Wayland connections, and builds without native Wayland
+support use the window backend. An existing explicit `"window"` or `"wayland"`
+setting remains an override; choose Auto to enable detection for that config.
+The CLI `--overlay-backend auto|window|wayland` overrides the saved preference.
+Backend changes require saving and restarting. Saving Auto preserves the
+preference so the next launch detects the session again. Native rendering errors
+remain visible in the panel for retry or an explicit switch to Window. Native positions live in separate `[wayland.*]` tables
+and use monitor-relative logical pixels. See the [native Wayland guide](native-wayland.md)
+for monitor selection, independent scales, fitting, and configuration examples.
+
 Set the top-level `hud_style` before any `[section]` headings:
 
 ```toml

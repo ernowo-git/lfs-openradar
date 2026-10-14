@@ -58,7 +58,9 @@ jobs:
       - name: Check compilation
         run: cargo check --locked
       - name: Lint all targets
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --all-targets --features wayland-mvp --locked -- -D warnings
+      - name: Test Wayland overlay MVP
+        run: cargo test --no-default-features --features wayland-mvp --example wayland-overlay --locked
       - name: Run desktop tests
         run: cargo test --locked
       - name: Run headless tests

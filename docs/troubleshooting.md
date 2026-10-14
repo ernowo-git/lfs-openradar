@@ -12,8 +12,11 @@ current Windows build; Linux/Proton behavior has not been verified here.
 | Panel preview and input stop when enabling Position mode, but overlay keeps moving | This was another redraw-delivery symptom. Use the current patched build. Capture the log's panel repaint observation if it recurs; note whether the panel was minimized or obscured. |
 | Overlay has a black or white rectangular background outside Position mode | Restart the current build, including the vendor patch. Transparency requires renderer alpha support, an unfilled radar, and Windows windows created without an opaque redirection bitmap. Windows uses DX12 with a DirectComposition visual swapchain; check its startup log entry and the selected `Dx12` backend. Report any alpha-mode warning. |
 | Cannot drag the overlay | Enable **Show overlay** and **Position mode**, then drag its native **title bar**. Radar contents are not a drag handle. **Move radar** and **X/Y** in the panel are alternatives. |
-| Gadget positions reset on Linux after saving | Use the current X11 build. On KDE Wayland it runs through XWayland; older native Wayland builds cannot read or restore screen positions. Move each gadget, turn Position mode off, and save again using the same config path. |
-| Linux desktop fails to start with an X11/display error | On Wayland, ensure XWayland is available and `DISPLAY` points to its X server. OpenRadar requires X11/XWayland for gadget placement. |
+| Gadget positions reset on Linux after saving | Check the active backend and config path. The window backend saves desktop positions; native Wayland saves separate monitor-relative positions. Use panel movement controls and Save settings. See the [native Wayland guide](native-wayland.md). |
+| Linux desktop fails to start with an X11/display error | Ensure XWayland is available and `DISPLAY` points to its X server. The control panel still needs X11/XWayland even with native overlays. |
+| Native HUD is hidden and the selected monitor is unavailable | Reconnect the selected monitor or choose another under Settings → Monitor. The app keeps the saved selection and does not move the HUD automatically. |
+| Auto still uses Window on KDE | Check Settings: an explicit saved Window choice overrides detection. Select Auto, save, and restart. Auto requires a KDE Wayland session, a reachable Wayland connection, Layer Shell, and a build with native Wayland support. The active choice is shown in Settings and logged at startup. |
+| Native Wayland reports initialization or rendering failure | Read the panel error and graphics log, then use Retry native overlay. A Wayland Layer Shell session and Vulkan transparency support are required. Select the window backend and restart for an explicit fallback. |
 | Overlay disappears after switching away from LFS | Windows hides it when **Hide overlay when LFS is in background** is enabled. Position mode overrides that hiding while Show overlay is enabled. |
 | Overlay is enabled but cannot be found | Enable Position mode and set X/Y to a visible location, such as 40/160. Check the intended monitor. Windowed/borderless LFS is the initial target; exclusive fullscreen is unverified. |
 | Size does not change while dragging its slider | Expected: release the pointer and allow 250 ms without another change. The native window then receives one settled size. |
@@ -212,8 +215,9 @@ the graphics dependencies, check these behaviors in normal use:
 5. Missing OutSim pauses both displays rather than leaving stale live positions.
 
 Do not deliberately repeat whole-PC hard locks as an acceptance test. Linux/X11,
-Wayland stacking, exclusive fullscreen, and broad DPI/monitor behavior remain
-outside the verified scope.
+Live Wayland stacking, exclusive fullscreen, and broad DPI/monitor behavior
+remain outside the verified scope. Native GPU demo and recovery checks are
+listed separately in the [native Wayland guide](native-wayland.md#verification-and-limits).
 
 ## What to include in a bug report
 
@@ -226,3 +230,13 @@ outside the verified scope.
 - Relevant TOML settings, Windows/LFS versions, and whether the current vendor
   patch was present. Exclude passwords and review logs for private paths before
   sharing. Record which build was run and restart after rebuilding it.
+
+## Linux show/hide shortcut
+
+On KDE/KWin, **Settings** should say `Toggle with Insert (also while driving)`
+(or your configured key). A registration or connection warning means the
+shortcut works only while the panel has focus. Check that the KDE global
+shortcut service is running, close another OpenRadar instance, or change
+`overlay_toggle_key` if the key is assigned to another KDE action, then restart
+OpenRadar. Other Linux desktops currently use the panel shortcut. `"None"`
+disables both global and panel shortcuts; **Show overlays** remains available.

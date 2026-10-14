@@ -1,12 +1,13 @@
 use super::{
     render::{GapPaintOptions, delta_value, paint, paint_delta, paint_gap},
+    session::{Gadget, SnapshotSource as OverlaySource},
     theme,
     window::{GapWindow, OverlayWindow},
 };
 use crate::{
-    config::{Config, GapSettings, HudStyle},
+    config::{Config, GapSettings, HudStyle, OverlayBackend},
     demo::Demo,
-    runtime::{Runtime, Snapshot, SnapshotReader},
+    runtime::{Runtime, Snapshot},
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2, ViewportBuilder, ViewportId};
 use std::{
@@ -37,6 +38,30 @@ pub fn run(
     screenshot: Option<PathBuf>,
 ) -> Result<(), String> {
     super::graphics_log::init(&config_path);
+    #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+    let auto_connection = if config.overlay_backend == OverlayBackend::Auto {
+        super::native::auto_connection()
+    } else {
+        None
+    };
+    let active_backend = match config.overlay_backend {
+        OverlayBackend::Auto => {
+            #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+            {
+                if auto_connection.is_some() {
+                    OverlayBackend::Wayland
+                } else {
+                    OverlayBackend::Window
+                }
+            }
+            #[cfg(not(all(target_os = "linux", feature = "native-wayland")))]
+            {
+                OverlayBackend::Window
+            }
+        }
+        backend => backend,
+    };
+    log::info!(target: "openradar_graphics", "Overlay backend {:?} · active {:?}", config.overlay_backend, active_backend);
     let wgpu_setup = eframe::egui_wgpu::WgpuSetupCreateNew::default();
     #[cfg(windows)]
     let wgpu_setup = {
@@ -86,7 +111,17 @@ pub fn run(
                 seconds,
                 screenshot,
             );
+            app.active_backend = active_backend;
             app.start_hotkey(&cc.egui_ctx);
+            #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+            if app.active_backend == OverlayBackend::Wayland {
+                let source = app.overlay_data.lock().unwrap().source.clone();
+                let connection = auto_connection.map(Ok).unwrap_or_else(|| {
+                    wayland_client::Connection::connect_to_env()
+                        .map_err(|e| format!("cannot connect to native Wayland: {e}"))
+                });
+                app.native = Some(super::native::NativeOverlay::with_connection(app.config.clone(), app.overlay_enabled, source, cc.egui_ctx.clone(), connection));
+            }
             Ok(Box::new(app))
         }),
     )
@@ -94,6 +129,10 @@ pub fn run(
 }
 
 struct App {
+    active_backend: OverlayBackend,
+    initial_backend: OverlayBackend,
+    #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+    native: Option<super::native::NativeOverlay>,
     config: Config,
     config_path: PathBuf,
     runtime: Option<Runtime>,
@@ -123,22 +162,6 @@ struct App {
 enum ControlTab {
     Gadgets,
     Settings,
-}
-
-#[derive(Clone)]
-enum OverlaySource {
-    Disconnected,
-    Live(SnapshotReader),
-    Demo(Arc<Mutex<Demo>>),
-}
-impl OverlaySource {
-    fn snapshot(&self, now: u64, config: &Config) -> Snapshot {
-        match self {
-            Self::Disconnected => Snapshot::default(),
-            Self::Live(reader) => reader.snapshot(),
-            Self::Demo(demo) => demo.lock().unwrap().snapshot(now, config),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -207,6 +230,14 @@ impl App {
             GapOverlay::new(&config.fuel, &overlay_data),
         ];
         let mut app = Self {
+            initial_backend: config.overlay_backend,
+            active_backend: match config.overlay_backend {
+                // Desktop startup resolves Auto before initializing presentation.
+                OverlayBackend::Auto => OverlayBackend::Window,
+                backend => backend,
+            },
+            #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+            native: None,
             overlay_data: Arc::new(Mutex::new(overlay_data)),
             gap_overlays,
             overlay_window: OverlayWindow::new(&config),
@@ -237,7 +268,7 @@ impl App {
         app
     }
     fn start_hotkey(&mut self, ctx: &egui::Context) {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         match self.config.overlay_toggle_key() {
             Ok(Some(key)) => {
                 match super::hotkey::OverlayHotkey::start(key.virtual_key, ctx.clone()) {
@@ -251,7 +282,7 @@ impl App {
             Ok(None) => {}
             Err(error) => self.hotkey_error = Some(error),
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         let _ = ctx;
     }
     fn toggle_overlays(&mut self) {
@@ -259,6 +290,12 @@ impl App {
         log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
     }
     fn process_hotkey(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "linux")]
+        if let Some(error) = self.hotkey.as_ref().and_then(|hotkey| hotkey.error()) {
+            log::error!(target: "openradar_graphics", "{error}");
+            self.hotkey_error = Some(error);
+            self.hotkey = None;
+        }
         let configured_key = self
             .config
             .overlay_toggle_key()
@@ -272,18 +309,19 @@ impl App {
         // Other desktop backends can use the shortcut while the panel has focus.
         #[cfg(not(windows))]
         let pressed = pressed
-            || configured_key.is_some_and(|key| {
-                ctx.input(|input| {
-                    input.events.iter().any(|event| {
-                        matches!(event,
+            || (self.hotkey.is_none()
+                && configured_key.is_some_and(|key| {
+                    ctx.input(|input| {
+                        input.events.iter().any(|event| {
+                            matches!(event,
                 egui::Event::Key { key: pressed_key, pressed: true, repeat: false, modifiers, .. }
                     if *pressed_key == key && modifiers.is_none())
+                        })
                     })
-                })
-            });
+                }));
         if let Some(key) = configured_key {
             // A configured Space/Enter shortcut must not also activate the
-            // focused checkbox. Only panel input is consumed; LFS keeps its key.
+            // focused checkbox in the panel.
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, key));
         }
         if pressed {
@@ -649,6 +687,15 @@ impl App {
                         self.connect();
                     }
                     if ui.button("Save settings").clicked() {
+                        #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+                        if let Some(native) = &self.native {
+                            native.update(
+                                self.config.clone(),
+                                self.overlay_enabled,
+                                self.overlay_data.lock().unwrap().source.clone(),
+                            );
+                            self.config = native.config_for_save();
+                        }
                         self.message = Some(match self.config.save(&self.config_path) {
                             Ok(()) => format!("Saved {}", self.config_path.display()),
                             Err(error) => error,
@@ -732,6 +779,85 @@ impl App {
     }
 
     fn settings_controls(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        ui.horizontal(|ui| {
+            ui.label("Overlay backend");
+            egui::ComboBox::from_id_salt("overlay-backend")
+                .selected_text(self.config.overlay_backend.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.config.overlay_backend,
+                        OverlayBackend::Auto,
+                        OverlayBackend::Auto.label(),
+                    );
+                    ui.selectable_value(
+                        &mut self.config.overlay_backend,
+                        OverlayBackend::Window,
+                        OverlayBackend::Window.label(),
+                    );
+                    if cfg!(all(target_os = "linux", feature = "native-wayland")) {
+                        ui.selectable_value(
+                            &mut self.config.overlay_backend,
+                            OverlayBackend::Wayland,
+                            OverlayBackend::Wayland.label(),
+                        );
+                    }
+                });
+        });
+        ui.label(format!("Active backend: {}", self.active_backend.label()));
+        if self.config.overlay_backend != self.initial_backend {
+            ui.label("Save settings and restart to change the overlay backend.");
+        }
+        if self.active_backend == OverlayBackend::Wayland {
+            #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+            if let Some(native) = &self.native {
+                let status = native.status();
+                ui.horizontal(|ui| {
+                    ui.label("Monitor");
+                    egui::ComboBox::from_id_salt("native-monitor")
+                        .selected_text(
+                            self.config
+                                .wayland
+                                .monitor
+                                .as_deref()
+                                .or(status.selected_monitor.as_deref())
+                                .unwrap_or("Waiting for monitors"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for monitor in &status.monitors {
+                                ui.selectable_value(
+                                    &mut self.config.wayland.monitor,
+                                    Some(monitor.name.clone()),
+                                    &monitor.name,
+                                );
+                            }
+                        });
+                });
+                if let Some(error) = &status.error {
+                    ui.colored_label(Color32::YELLOW, error);
+                    if ui.button("Retry native overlay").clicked() {
+                        self.native.as_mut().unwrap().retry();
+                    }
+                } else if let Some(warning) = &status.warning {
+                    ui.colored_label(Color32::YELLOW, warning);
+                } else if status.ready {
+                    ui.label(format!(
+                        "Native HUD ready · {:.2}× display scale",
+                        status
+                            .monitors
+                            .iter()
+                            .find(|m| Some(&m.name) == status.selected_monitor.as_ref())
+                            .map_or(1.0, |m| m.scale)
+                    ));
+                }
+            }
+            #[cfg(not(all(target_os = "linux", feature = "native-wayland")))]
+            ui.colored_label(
+                Color32::YELLOW,
+                "native Wayland unavailable in this build; select the window backend and restart",
+            );
+            ui.label("Adjust positions in Gadgets with X/Y or Move gadget. Visibility is manual.");
+            ui.add_space(12.0);
+        }
         ui.heading("Overlay visibility");
         if ui
             .checkbox(&mut self.overlay_enabled, "Show overlays")
@@ -740,7 +866,7 @@ impl App {
             log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
         }
         if let Ok(Some(key)) = self.config.overlay_toggle_key() {
-            let scope = if cfg!(windows) {
+            let scope = if self.hotkey.is_some() {
                 "also while driving"
             } else {
                 "while this window has focus"
@@ -750,18 +876,20 @@ impl App {
         if let Some(error) = &self.hotkey_error {
             ui.colored_label(Color32::YELLOW, error);
         }
-        ui.checkbox(
-            &mut self.config.hide_when_background,
-            "Hide overlay when LFS is in background",
-        );
-        if super::game_foreground().is_none() {
-            ui.label(
-                egui::RichText::new(
-                    "Foreground detection unavailable here; overlay visibility is manual.",
-                )
-                .small()
-                .color(Color32::YELLOW),
+        if self.active_backend == OverlayBackend::Window {
+            ui.checkbox(
+                &mut self.config.hide_when_background,
+                "Hide overlay when LFS is in background",
             );
+            if super::game_foreground().is_none() {
+                ui.label(
+                    egui::RichText::new(
+                        "Foreground detection unavailable here; overlay visibility is manual.",
+                    )
+                    .small()
+                    .color(Color32::YELLOW),
+                );
+            }
         }
         ui.add_space(12.0);
         ui.heading("Telemetry");
@@ -880,6 +1008,70 @@ impl App {
     }
 
     fn gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
+        if self.active_backend == OverlayBackend::Window {
+            self.paint_gadget_cards(ui, snapshot);
+            return;
+        }
+        let mut window = self.config.clone();
+        #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+        let geometry = self
+            .native
+            .as_ref()
+            .map(|native| native.status().gadgets)
+            .unwrap_or_default();
+        #[cfg(not(all(target_os = "linux", feature = "native-wayland")))]
+        let geometry: Vec<super::session::GadgetGeometry> = Vec::new();
+        for &gadget in GADGETS {
+            let placement = gadget.placement(&self.config).clone();
+            let displayed = geometry
+                .iter()
+                .find(|g: &&super::session::GadgetGeometry| g.gadget == gadget)
+                .map(|g| g.rect.min)
+                .unwrap_or(Pos2::ZERO);
+            let x = placement.x.unwrap_or(displayed.x);
+            let y = placement.y.unwrap_or(displayed.y);
+            if let Some(settings) = gadget.window_settings_mut(&mut self.config) {
+                settings.window_x = Some(x);
+                settings.window_y = Some(y);
+                settings.scale = placement.scale;
+            } else {
+                self.config.overlay_x = x;
+                self.config.overlay_y = y;
+                self.config.overlay_size = 320.0 * placement.scale;
+            }
+        }
+        self.paint_gadget_cards(ui, snapshot);
+        for &gadget in GADGETS {
+            let (x, y, scale) = if let Some(settings) = gadget.window_settings_mut(&mut self.config)
+            {
+                let values = (settings.window_x, settings.window_y, settings.scale);
+                let old = gadget.window_settings_mut(&mut window).unwrap();
+                settings.window_x = old.window_x;
+                settings.window_y = old.window_y;
+                settings.scale = old.scale;
+                values
+            } else {
+                (
+                    Some(self.config.overlay_x),
+                    Some(self.config.overlay_y),
+                    self.config.overlay_size / 320.0,
+                )
+            };
+            let placement = gadget.placement_mut(&mut self.config);
+            if placement.x.is_some() || !geometry.is_empty() || x != Some(0.0) {
+                placement.x = x;
+            }
+            if placement.y.is_some() || !geometry.is_empty() || y != Some(0.0) {
+                placement.y = y;
+            }
+            placement.scale = scale;
+        }
+        self.config.overlay_x = window.overlay_x;
+        self.config.overlay_y = window.overlay_y;
+        self.config.overlay_size = window.overlay_size;
+    }
+
+    fn paint_gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
         let previous_style = self.config.hud_style;
         let previous_debug = self.config.hud_debug;
         ui.horizontal_wrapped(|ui| {
@@ -1003,7 +1195,7 @@ impl App {
                                                 log::info!(target: "openradar_graphics", "Position mode {}", self.edit_overlay);
                                             }
                                             ui.label(egui::RichText::new(
-                                                "Enable Position mode to drag the radar title bar or use Move radar."
+                                                if self.active_backend == OverlayBackend::Wayland { "Use X/Y or Move radar here; the overlay stays click-through." } else { "Enable Position mode to drag the radar title bar or use Move radar." }
                                             ).small());
                                             position_controls(ui, &mut self.config, &mut self.overlay_window, self.edit_overlay);
                                             ui.add(egui::Slider::new(&mut self.config.overlay_size, 220.0..=800.0)
@@ -1051,7 +1243,7 @@ impl App {
                                             ui.checkbox(&mut gap.editing, "Position mode");
                                             ui.label(
                                                 egui::RichText::new(
-                                                    "Drag this gadget's title bar to move it.",
+                                                    if self.active_backend == OverlayBackend::Wayland { "Use X/Y or Move gadget here; the overlay stays click-through." } else { "Drag this gadget's title bar to move it." },
                                                 )
                                                 .small(),
                                             );
@@ -1079,15 +1271,6 @@ impl App {
 }
 
 // Registry order is insertion order. Appending a gadget fills the next cell.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Gadget {
-    Radar,
-    Ahead,
-    Behind,
-    Delta,
-    Dashboard,
-    Fuel,
-}
 const GADGETS: &[Gadget] = &[
     Gadget::Radar,
     Gadget::Dashboard,
@@ -1247,49 +1430,62 @@ impl eframe::App for App {
         if self.folder_picker.as_ref().is_some_and(|p| p.closed) {
             self.folder_picker = None;
         }
-        let foreground = super::game_foreground().unwrap_or(true);
-        let show_overlay = overlay_visible(
-            self.overlay_enabled,
-            self.config.radar_enabled,
-            self.edit_overlay,
-            self.demo.is_some(),
-            self.config.hide_when_background,
-            foreground,
-        );
-        if self.overlay_window.settle_size(
-            self.config.overlay_size,
-            self.started.elapsed(),
-            ctx.input(|input| input.pointer.any_down()),
-        ) {
-            log::info!(target: "openradar_graphics", "Settled overlay size {}", self.config.overlay_size.round());
+        if self.active_backend == OverlayBackend::Window {
+            let foreground = super::game_foreground().unwrap_or(true);
+            let show_overlay = overlay_visible(
+                self.overlay_enabled,
+                self.config.radar_enabled,
+                self.edit_overlay,
+                self.demo.is_some(),
+                self.config.hide_when_background,
+                foreground,
+            );
+            if self.overlay_window.settle_size(
+                self.config.overlay_size,
+                self.started.elapsed(),
+                ctx.input(|input| input.pointer.any_down()),
+            ) {
+                log::info!(target: "openradar_graphics", "Settled overlay size {}", self.config.overlay_size.round());
+            }
+            self.overlay_created |= show_overlay;
+            // Keep the native window and GPU surface registered while hidden.
+            // Focus changes should change visibility, not destroy/recreate surfaces.
+            if self.overlay_created {
+                let overlay_id = ViewportId::from_hash_of("radar-overlay");
+                let builder = self.overlay_window.builder(show_overlay, self.edit_overlay);
+                let became_visible = {
+                    let mut data = self.overlay_data.lock().unwrap();
+                    let became_visible = show_overlay && !data.visible;
+                    data.config = self.config.clone();
+                    data.visible = show_overlay;
+                    data.editing = self.edit_overlay;
+                    data.control_painted_at = Instant::now();
+                    became_visible
+                };
+                let data = self.overlay_data.clone();
+                let feedback = self.overlay_feedback.clone();
+                ctx.show_viewport_deferred(overlay_id, builder, move |child, _| {
+                    render_overlay(child, &data, &feedback);
+                });
+                // The child has its own timer. An immediate request every parent
+                // pass can flood Windows redraw delivery across the two windows.
+                if became_visible {
+                    ctx.request_repaint_of(overlay_id);
+                }
+            }
+            self.show_gap_overlays(ctx, foreground);
         }
-        self.overlay_created |= show_overlay;
-        // Keep the native window and GPU surface registered while hidden.
-        // Focus changes should change visibility, not destroy/recreate surfaces.
-        if self.overlay_created {
-            let overlay_id = ViewportId::from_hash_of("radar-overlay");
-            let builder = self.overlay_window.builder(show_overlay, self.edit_overlay);
-            let became_visible = {
-                let mut data = self.overlay_data.lock().unwrap();
-                let became_visible = show_overlay && !data.visible;
-                data.config = self.config.clone();
-                data.visible = show_overlay;
-                data.editing = self.edit_overlay;
-                data.control_painted_at = Instant::now();
-                became_visible
-            };
-            let data = self.overlay_data.clone();
-            let feedback = self.overlay_feedback.clone();
-            ctx.show_viewport_deferred(overlay_id, builder, move |child, _| {
-                render_overlay(child, &data, &feedback);
-            });
-            // The child has its own timer. An immediate request every parent
-            // pass can flood Windows redraw delivery across the two windows.
-            if became_visible {
-                ctx.request_repaint_of(overlay_id);
+        #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+        if let Some(native) = &self.native {
+            native.update(
+                self.config.clone(),
+                self.overlay_enabled,
+                self.overlay_data.lock().unwrap().source.clone(),
+            );
+            if self.config.wayland.monitor.is_none() {
+                self.config.wayland.monitor = native.status().selected_monitor;
             }
         }
-        self.show_gap_overlays(ctx, foreground);
         self.capture(ctx);
         if self
             .seconds
@@ -1462,7 +1658,11 @@ fn gap_position_controls(
         let drag = ui
             .add(egui::Button::new("Move gadget").sense(egui::Sense::drag()))
             .on_hover_cursor(egui::CursorIcon::Grab);
-        let delta = drag.drag_delta();
+        let delta = if drag.drag_started() {
+            Vec2::ZERO
+        } else {
+            drag.drag_delta()
+        };
         if delta != Vec2::ZERO {
             *settings.window_x.get_or_insert(0.0) += delta.x;
             *settings.window_y.get_or_insert(0.0) += delta.y;
@@ -1497,7 +1697,11 @@ fn position_controls(
         let drag = ui
             .add(egui::Button::new("Move radar").sense(egui::Sense::drag()))
             .on_hover_cursor(egui::CursorIcon::Grab);
-        let delta = drag.drag_delta();
+        let delta = if drag.drag_started() {
+            Vec2::ZERO
+        } else {
+            drag.drag_delta()
+        };
         if delta != Vec2::ZERO {
             config.overlay_x = (config.overlay_x + delta.x).clamp(-8000.0, 8000.0);
             config.overlay_y = (config.overlay_y + delta.y).clamp(-8000.0, 8000.0);
@@ -1532,6 +1736,495 @@ fn follow_view_controls(ui: &mut egui::Ui, config: &mut Config) -> egui::Respons
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+    #[test]
+    fn panel_save_keeps_auto_preference_when_native_backend_is_active() {
+        use eframe::App as _;
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let path =
+            std::env::temp_dir().join(format!("openradar-auto-save-{}.toml", std::process::id()));
+        let config = Config {
+            overlay_x: -900.0,
+            overlay_y: 120.0,
+            ..Default::default()
+        };
+        let mut app = App::new(config.clone(), path.clone(), true, None, None);
+        app.active_backend = OverlayBackend::Wayland;
+        app.native = Some(super::super::native::NativeOverlay::with_connection(
+            config,
+            true,
+            OverlaySource::Disconnected,
+            ctx.clone(),
+            Err("test display unavailable".into()),
+        ));
+        app.tab = ControlTab::Settings;
+        let mut draw = |events| {
+            ctx.run(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut eframe::Frame::_new_kittest()),
+            )
+        };
+        let output = draw(vec![]);
+        let has_text = |expected| {
+            output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Text(text) if text.galley.job.text == expected))
+        };
+        assert!(has_text("Auto (recommended)"));
+        assert!(has_text("Active backend: Native Wayland"));
+        assert!(!has_text(
+            "Save settings and restart to change the overlay backend."
+        ));
+        let save = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == "Save settings" => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        for pressed in [true, false] {
+            draw(vec![
+                egui::Event::PointerMoved(save),
+                egui::Event::PointerButton {
+                    pos: save,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        let saved = Config::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(saved.overlay_backend, OverlayBackend::Auto);
+        assert_eq!(saved.overlay_x, -900.0);
+        assert_eq!(saved.overlay_y, 120.0);
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires real KDE and native GPU; temporarily binds F24 and Insert, run serially"]
+    fn kde_shortcut_toggles_show_overlays_without_panel_keyboard_input() {
+        use eframe::App as _;
+        let connection = dbus::blocking::Connection::new_session().unwrap();
+        let kde = connection.with_proxy(
+            "org.kde.kglobalaccel",
+            "/kglobalaccel",
+            Duration::from_secs(2),
+        );
+        for (name, qt_key, backend) in [
+            ("F24", 0x01000047, OverlayBackend::Window),
+            ("Insert", 0x01000006, OverlayBackend::Window),
+            ("Insert", 0x01000006, OverlayBackend::Wayland),
+        ] {
+            #[cfg(not(feature = "native-wayland"))]
+            if backend == OverlayBackend::Wayland {
+                continue;
+            }
+            let ctx = egui::Context::default();
+            super::super::fonts::install(&ctx);
+            ctx.set_embed_viewports(false);
+            let config = Config {
+                overlay_toggle_key: name.into(),
+                overlay_backend: backend,
+                ..Default::default()
+            };
+            let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+            #[cfg(feature = "native-wayland")]
+            if backend == OverlayBackend::Wayland {
+                let source = app.overlay_data.lock().unwrap().source.clone();
+                app.native = Some(super::super::native::NativeOverlay::start(
+                    app.config.clone(),
+                    true,
+                    source,
+                    ctx.clone(),
+                ));
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !app.native.as_ref().unwrap().status().ready && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert!(app.native.as_ref().unwrap().status().ready);
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    app.update(ctx, &mut eframe::Frame::_new_kittest())
+                });
+            }
+            let saved = toml::to_string(&app.config).unwrap();
+            app.start_hotkey(&ctx);
+            let action = vec![
+                "lfs-openradar",
+                "toggle-overlays",
+                "OpenRadar",
+                "Show/hide overlays",
+            ];
+            let (keys,): (Vec<i32>,) = kde
+                .method_call("org.kde.KGlobalAccel", "shortcut", (action.clone(),))
+                .unwrap();
+            assert_eq!(keys, [qt_key], "{:?}", app.hotkey_error);
+            let (path,): (dbus::Path<'static>,) = kde
+                .method_call("org.kde.KGlobalAccel", "getComponent", ("lfs-openradar",))
+                .unwrap();
+            let component =
+                connection.with_proxy("org.kde.kglobalaccel", path, Duration::from_secs(2));
+            for visible in [false, true] {
+                let (): () = component
+                    .method_call(
+                        "org.kde.kglobalaccel.Component",
+                        "invokeShortcut",
+                        ("toggle-overlays",),
+                    )
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(2);
+                loop {
+                    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                        app.update(ctx, &mut eframe::Frame::_new_kittest());
+                    });
+                    if app.overlay_enabled == visible || Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert_eq!(app.overlay_enabled, visible, "{:?}", app.hotkey_error);
+                #[cfg(feature = "native-wayland")]
+                if let Some(native) = &app.native {
+                    assert_eq!(native.status().visible, visible);
+                }
+                assert_eq!(toml::to_string(&app.config).unwrap(), saved);
+            }
+            // A second panel falls back locally without taking the first panel's action.
+            let mut second = App::new(
+                app.config.clone(),
+                PathBuf::from("unused.toml"),
+                true,
+                None,
+                None,
+            );
+            second.start_hotkey(&ctx);
+            assert!(
+                second
+                    .hotkey_error
+                    .as_ref()
+                    .unwrap()
+                    .contains("another OpenRadar instance")
+            );
+            drop(second);
+            let (keys,): (Vec<i32>,) = kde
+                .method_call("org.kde.KGlobalAccel", "shortcut", (action.clone(),))
+                .unwrap();
+            assert_eq!(keys, [qt_key]);
+            drop(app);
+            let (keys,): (Vec<i32>,) = kde
+                .method_call("org.kde.KGlobalAccel", "shortcut", (action,))
+                .unwrap();
+            assert!(keys.is_empty(), "closing OpenRadar must release the key");
+        }
+        // A conflicting desktop action must survive registration failure.
+        struct ReservedShortcut<'a>(&'a dbus::blocking::Connection);
+        impl Drop for ReservedShortcut<'_> {
+            fn drop(&mut self) {
+                let proxy = self.0.with_proxy(
+                    "org.kde.kglobalaccel",
+                    "/kglobalaccel",
+                    Duration::from_secs(1),
+                );
+                let _: Result<(bool,), _> = proxy.method_call(
+                    "org.kde.KGlobalAccel",
+                    "unregister",
+                    ("openradar-hotkey-test", "busy"),
+                );
+            }
+        }
+        let busy = vec![
+            "openradar-hotkey-test",
+            "busy",
+            "Shortcut test",
+            "Reserved F24",
+        ];
+        let (): () = kde
+            .method_call("org.kde.KGlobalAccel", "doRegister", (busy.clone(),))
+            .unwrap();
+        let _reserved = ReservedShortcut(&connection);
+        let (keys,): (Vec<i32>,) = kde
+            .method_call(
+                "org.kde.KGlobalAccel",
+                "setShortcut",
+                (busy.clone(), vec![0x01000047i32], 6u32),
+            )
+            .unwrap();
+        assert_eq!(keys, [0x01000047]);
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.set_embed_viewports(false);
+        let mut app = App::new(
+            Config {
+                overlay_toggle_key: "F24".into(),
+                ..Default::default()
+            },
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        app.start_hotkey(&ctx);
+        app.tab = ControlTab::Settings;
+        let output = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::F24,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| app.update(ctx, &mut eframe::Frame::_new_kittest()),
+        );
+        assert!(
+            !app.overlay_enabled,
+            "the panel shortcut must remain available"
+        );
+        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Text(text) if text.galley.job.text.contains("key is already assigned"))));
+        let (keys,): (Vec<i32>,) = kde
+            .method_call("org.kde.KGlobalAccel", "shortcut", (busy,))
+            .unwrap();
+        assert_eq!(keys, [0x01000047]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn panel_shortcut_fallback_ignores_held_keys_and_respects_none() {
+        use eframe::App as _;
+        for (setting, expected) in [("Insert", false), ("None", true)] {
+            let ctx = egui::Context::default();
+            super::super::fonts::install(&ctx);
+            ctx.set_embed_viewports(false);
+            let mut app = App::new(
+                Config {
+                    overlay_toggle_key: setting.into(),
+                    ..Default::default()
+                },
+                PathBuf::from("unused.toml"),
+                true,
+                None,
+                None,
+            );
+            for repeat in [false, true, true] {
+                let _ = ctx.run(
+                    egui::RawInput {
+                        events: vec![egui::Event::Key {
+                            key: egui::Key::Insert,
+                            physical_key: None,
+                            pressed: true,
+                            repeat,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
+                        ..Default::default()
+                    },
+                    |ctx| app.update(ctx, &mut eframe::Frame::_new_kittest()),
+                );
+                assert_eq!(app.overlay_enabled, expected);
+                assert!(app.config.radar_enabled);
+            }
+        }
+    }
+    #[test]
+    fn native_panel_does_not_replace_uninitialized_layout_with_zero_positions() {
+        use eframe::App as _;
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let path = std::env::temp_dir().join(format!(
+            "openradar-native-uninitialized-{}.toml",
+            std::process::id()
+        ));
+        let mut app = App::new(
+            Config {
+                overlay_backend: OverlayBackend::Wayland,
+                ..Default::default()
+            },
+            path.clone(),
+            true,
+            None,
+            None,
+        );
+        let mut draw = |events| {
+            ctx.run(
+                egui::RawInput {
+                    events,
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut eframe::Frame::_new_kittest()),
+            )
+        };
+        let output = draw(vec![]);
+        let save = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == "Save settings" => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        for pressed in [true, false] {
+            draw(vec![
+                egui::Event::PointerMoved(save),
+                egui::Event::PointerButton {
+                    pos: save,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        let saved = Config::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(saved.wayland.radar.x.is_none());
+        assert!(saved.wayland.fuel.y.is_none());
+    }
+    #[cfg(all(target_os = "linux", feature = "native-wayland"))]
+    #[test]
+    fn native_failure_keeps_backend_monitor_and_retry_controls_available() {
+        use eframe::App as _;
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let config = Config {
+            overlay_backend: OverlayBackend::Wayland,
+            ..Default::default()
+        };
+        let mut app = App::new(
+            config.clone(),
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        app.native = Some(super::super::native::NativeOverlay::with_connection(
+            config,
+            true,
+            OverlaySource::Disconnected,
+            ctx.clone(),
+            Err("cannot connect to native Wayland".into()),
+        ));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while app.native.as_ref().unwrap().status().error.is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        app.tab = ControlTab::Settings;
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1500.0))),
+                ..Default::default()
+            },
+            |ctx| app.update(ctx, &mut eframe::Frame::_new_kittest()),
+        );
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        for label in [
+            "Overlay backend",
+            "Active backend: Native Wayland",
+            "Monitor",
+            "Retry native overlay",
+            "cannot connect to native Wayland",
+        ] {
+            assert!(texts.contains(&label), "missing {label}");
+        }
+    }
+    #[test]
+    fn native_panel_move_and_save_preserve_window_layout() {
+        use eframe::App as _;
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.set_embed_viewports(false);
+        let path = std::env::temp_dir().join(format!(
+            "openradar-native-panel-{}.toml",
+            std::process::id()
+        ));
+        let mut config = Config {
+            overlay_backend: OverlayBackend::Wayland,
+            overlay_x: -900.0,
+            overlay_y: 100.0,
+            overlay_size: 440.0,
+            ..Default::default()
+        };
+        config.wayland.radar.x = Some(120.0);
+        config.wayland.radar.y = Some(40.0);
+        let mut app = App::new(config, path.clone(), true, None, None);
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut time = 0.0;
+        let mut draw = |events| {
+            time += 0.02;
+            ctx.run(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(2400.0, 1200.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| app.update(ctx, &mut frame),
+            )
+        };
+        let locate = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing {label}"))
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut output = draw(vec![]);
+        for _ in 0..6 {
+            output = draw(vec![]);
+        }
+        let toggle = locate(&output, "Radar position mode");
+        for pressed in [true, false] {
+            draw(vec![
+                egui::Event::PointerMoved(toggle),
+                button(toggle, pressed),
+            ]);
+        }
+        output = draw(vec![]);
+        let origin = locate(&output, "Move radar");
+        draw(vec![
+            egui::Event::PointerMoved(origin),
+            button(origin, true),
+        ]);
+        let moved = origin + Vec2::new(40.0, 25.0);
+        draw(vec![egui::Event::PointerMoved(moved)]);
+        output = draw(vec![button(moved, false)]);
+        let save = locate(&output, "Save settings");
+        for pressed in [true, false] {
+            draw(vec![egui::Event::PointerMoved(save), button(save, pressed)]);
+        }
+        let saved = Config::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(saved.wayland.radar.x, Some(160.0));
+        assert_eq!(saved.wayland.radar.y, Some(65.0));
+        assert_eq!(saved.overlay_x, -900.0);
+        assert_eq!(saved.overlay_y, 100.0);
+        assert_eq!(saved.overlay_size, 440.0);
+    }
     use crate::overlay::{
         gap_style,
         render::{estimated_lap_text, lap_time_text},
