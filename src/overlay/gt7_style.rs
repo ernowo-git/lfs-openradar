@@ -11,13 +11,13 @@ use super::{
 };
 use eframe::egui::{Align2, Color32, Stroke, Vec2};
 
-const WHITE: Color32 = Color32::from_rgb(249, 250, 255);
-const MUTED: Color32 = Color32::from_rgb(216, 221, 248);
+pub(super) const WHITE: Color32 = Color32::from_rgb(249, 250, 255);
+pub(super) const MUTED: Color32 = Color32::from_rgb(216, 221, 248);
 const BACKDROP: Color32 = Color32::TRANSPARENT;
 /// Grey-black cell backing at 30% opacity (77 / 255).
-const CELL_BACKGROUND: Color32 = Color32::from_rgba_unmultiplied_const(24, 24, 24, 77);
+pub(super) const CELL_BACKGROUND: Color32 = Color32::from_rgba_unmultiplied_const(24, 24, 24, 77);
 pub(super) const GAIN_TEXT: Color32 = Color32::from_rgb(112, 189, 255);
-const LOSS_TEXT: Color32 = Color32::from_rgb(255, 134, 145);
+pub(super) const LOSS_TEXT: Color32 = Color32::from_rgb(255, 134, 145);
 const BLUE: Color32 = Color32::from_rgb(20, 98, 210);
 const RED: Color32 = Color32::from_rgb(223, 20, 45);
 const POSITION_BORDER: Color32 = Color32::from_rgb(147, 154, 182);

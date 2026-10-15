@@ -57,6 +57,7 @@ fn split_packet_preserves_player_timing_checkpoint_and_penalty() {
     let mut bytes = packet(25, 16);
     bytes[3] = 7;
     bytes[4..8].copy_from_slice(&23456_u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&123456_u32.to_le_bytes());
     bytes[12] = 1;
     bytes[13] = 2;
     assert!(matches!(
@@ -64,6 +65,7 @@ fn split_packet_preserves_player_timing_checkpoint_and_penalty() {
         Packet::Split {
             plid: 7,
             time_ms: 23456,
+            elapsed_ms: 123456,
             split: 1,
             penalty: 2
         }

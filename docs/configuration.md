@@ -308,3 +308,70 @@ are accepted for compatibility and removed when settings are saved.
 Fuel defaults to disabled in older configurations. It shares the dashboard's
 #252525 body at 40% opacity and retains its supplied design in either HUD style.
 See [Fuel usage](usage.md#fuel) for the range, margin, and REFUEL meanings.
+
+## Lap records
+
+Enable **Lap records** in Gadgets to display the PB lap's cumulative splits and
+independent best sectors. Recording runs whenever live InSim is connected, even
+when this gadget or Show overlays is hidden. It records only your own human car;
+Follow viewed car does not record AI or opponent PBs. OutSim and OutGauge samples
+are unnecessary for lap records.
+
+```toml
+[lap_records]
+enabled = true
+window_x = 376.0
+window_y = 986.0
+scale = 1.0
+```
+
+Native Wayland placement is separate, under `[wayland.lap_records]` with `x`, `y`
+and `scale`, like the other gadgets. Existing configs default to a disabled
+Lap records gadget and an empty record collection.
+
+Improved records are automatically saved to the startup config path (including
+`--config PATH`). For example:
+
+```toml
+[track_records.BL1.XFG]
+checkpoint_count = 2
+best_sectors_ms = [29000, 35000, 35000]
+
+[track_records.BL1.XFG.pb]
+checkpoints_ms = [30000, 65000]
+lap_ms = 100000
+```
+
+Values are integer milliseconds. The outer key preserves the full track code,
+including reverse variants; car keys use LFS codes or hexadecimal vehicle mod
+IDs. PB checkpoints stay together from one lap. Best sectors update only after
+a complete lap. The PB row displays the recorded PB lap time; the BEST row's
+THEORETICAL value is calculated from the sum of the best sectors without storing
+a separate total.
+
+Automatic record saves preserve your last saved settings; unsaved HUD edits and
+runtime password overrides are saved only by explicit **Save settings**. One
+OpenRadar instance may write a config at a time, enforced with a sibling `.lock`
+file. The lock releases when the process exits; the file can remain. Write errors
+remain visible and retry automatically; the prior config survives a failed
+replacement. Demo mode never automatically saves synthetic records.
+
+See [Lap records usage](usage.md#lap-records) for lap acceptance and sector labels.
+
+## Lap-time log
+
+Enable **Lap-time log** in Gadgets, or configure:
+
+```toml
+[lap_log]
+enabled = true
+window_x = 1100.0
+window_y = 260.0
+scale = 1.0
+```
+
+Native Wayland placement is independent under `[wayland.lap_log]`, using `x`,
+`y` and `scale`. Old configurations default to a disabled gadget. Lap history
+and session best are memory-only and never enter the configuration file. The
+latest eight laps are visible, using GT styling in either HUD style selection.
+See [Lap-time log usage](usage.md#lap-time-log) for lifetime and delta behavior.

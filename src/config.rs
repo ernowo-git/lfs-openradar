@@ -46,6 +46,8 @@ pub struct WaylandSettings {
     pub performance_delta: GadgetPlacement,
     pub speed_dashboard: GadgetPlacement,
     pub fuel: GadgetPlacement,
+    pub lap_records: GadgetPlacement,
+    pub lap_log: GadgetPlacement,
 }
 
 /// Built-in overlay appearance, independent of the desktop renderer.
@@ -128,6 +130,10 @@ pub struct Config {
     pub cars: BTreeMap<String, CarProfile>,
     pub speed_dashboard: GapSettings,
     pub fuel: GapSettings,
+    pub lap_records: GapSettings,
+    pub lap_log: GapSettings,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub track_records: crate::lap_records::Records,
     /// Percentage of the configured RPM limit that starts the red/blue blink.
     pub rpm_blink_threshold_percent: u8,
     /// Time each RPM blink color is shown, in milliseconds.
@@ -211,6 +217,9 @@ impl Default for Config {
             )]),
             speed_dashboard: GapSettings::default(),
             fuel: GapSettings::default(),
+            lap_records: GapSettings::default(),
+            lap_log: GapSettings::default(),
+            track_records: BTreeMap::new(),
             rpm_blink_threshold_percent: 95,
             rpm_blink_interval_ms: 100,
             outsim_options: 0x1ff,
@@ -309,7 +318,7 @@ impl Config {
         saved.cars.retain(|_, profile| profile.max_rpm > 0);
         saved.prepare_gap_positions();
         let raw = toml::to_string_pretty(&saved).map_err(|e| e.to_string())?;
-        std::fs::write(path, raw).map_err(|e| e.to_string())
+        atomic_write(path, raw.as_bytes())
     }
 
     pub fn prepare_gap_positions(&mut self) {
@@ -319,6 +328,8 @@ impl Config {
             (&mut self.performance_delta, 0.5, 200.0),
             (&mut self.speed_dashboard, 0.5, 360.0),
             (&mut self.fuel, 0.5, 586.0),
+            (&mut self.lap_records, 0.5, 826.0),
+            (&mut self.lap_log, 0.5, 1050.0),
         ] {
             let legacy = settings.legacy_x.is_some() || settings.legacy_y.is_some();
             settings.window_x.get_or_insert(if legacy {
@@ -338,6 +349,27 @@ impl Config {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        for (track, cars) in &self.track_records {
+            if track.is_empty()
+                || track.len() > 6
+                || !track.bytes().all(|b| b.is_ascii_alphanumeric())
+            {
+                return Err(
+                    "lap record track codes must contain 1..6 ASCII letters or digits".into(),
+                );
+            }
+            for (car, record) in cars {
+                if car.is_empty()
+                    || car.len() > 32
+                    || !car.bytes().all(|b| b.is_ascii_alphanumeric())
+                {
+                    return Err(
+                        "lap record car codes must contain 1..32 ASCII letters or digits".into(),
+                    );
+                }
+                record.validate()?;
+            }
+        }
         for (index, placement) in [
             &self.wayland.radar,
             &self.wayland.gap_ahead,
@@ -345,6 +377,8 @@ impl Config {
             &self.wayland.performance_delta,
             &self.wayland.speed_dashboard,
             &self.wayland.fuel,
+            &self.wayland.lap_records,
+            &self.wayland.lap_log,
         ]
         .into_iter()
         .enumerate()
@@ -422,6 +456,8 @@ impl Config {
             &self.performance_delta,
             &self.speed_dashboard,
             &self.fuel,
+            &self.lap_records,
+            &self.lap_log,
         ] {
             if [settings.window_x, settings.window_y]
                 .iter()
@@ -503,4 +539,159 @@ impl Config {
 pub struct OverlayToggleKey {
     pub virtual_key: u8,
     pub name: String,
+}
+
+pub type SharedConfigStore = std::sync::Arc<std::sync::Mutex<ConfigStore>>;
+
+/// One writer for automatic records and explicitly saved settings. The baseline
+/// deliberately excludes unsaved panel edits and runtime credential overrides.
+pub struct ConfigStore {
+    path: std::path::PathBuf,
+    baseline: Config,
+    pub records: crate::lap_records::Records,
+    dirty: bool,
+    pub error: Option<String>,
+    _lock: std::fs::File,
+}
+
+impl ConfigStore {
+    pub fn open(path: &Path) -> Result<SharedConfigStore, String> {
+        let path = if path.exists() {
+            std::fs::canonicalize(path).map_err(|e| e.to_string())?
+        } else {
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            std::fs::canonicalize(parent)
+                .map_err(|e| e.to_string())?
+                .join(path.file_name().ok_or("config path needs a filename")?)
+        };
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(0);
+        }
+        let lock = options
+            .open(lock_path)
+            .map_err(|e| format!("cannot lock config: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe extern "C" {
+                fn flock(fd: std::ffi::c_int, operation: std::ffi::c_int) -> std::ffi::c_int;
+            }
+            // LOCK_EX | LOCK_NB; closing the file releases the advisory lock, even after a crash.
+            if unsafe { flock(lock.as_raw_fd(), 2 | 4) } != 0 {
+                return Err("config is already open in another OpenRadar instance".into());
+            }
+        }
+        let baseline = if path.exists() {
+            Config::load(&path)?
+        } else {
+            Config::default()
+        };
+        Ok(std::sync::Arc::new(std::sync::Mutex::new(Self {
+            records: baseline.track_records.clone(),
+            baseline,
+            path,
+            dirty: false,
+            error: None,
+            _lock: lock,
+        })))
+    }
+
+    pub fn update_records(&mut self, records: crate::lap_records::Records) {
+        self.records = records;
+        self.dirty = true;
+        self.flush();
+    }
+
+    pub fn flush(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        let mut saved = self.baseline.clone();
+        saved.track_records = self.records.clone();
+        match saved.save(&self.path) {
+            Ok(()) => {
+                self.baseline = saved;
+                self.dirty = false;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(format!("cannot save lap records: {error}")),
+        }
+    }
+
+    pub fn save_settings(&mut self, settings: &Config) -> Result<(), String> {
+        let mut saved = settings.clone();
+        saved.track_records = self.records.clone();
+        saved.save(&self.path)?;
+        self.baseline = saved;
+        self.dirty = false;
+        self.error = None;
+        Ok(())
+    }
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temporary = std::path::PathBuf::from(name);
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
+        file.write_all(bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        #[cfg(not(windows))]
+        std::fs::rename(&temporary, path).map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::Storage::FileSystem::{
+                MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+            };
+            let from: Vec<_> = temporary.as_os_str().encode_wide().chain([0]).collect();
+            let to: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
+            if unsafe {
+                MoveFileExW(
+                    from.as_ptr(),
+                    to.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }

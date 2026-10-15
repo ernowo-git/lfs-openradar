@@ -9,6 +9,8 @@ pub mod delta;
 pub mod demo;
 pub mod fuel;
 pub mod gaps;
+pub mod lap_log;
+pub mod lap_records;
 pub mod lfs;
 pub mod overlay;
 pub mod radar;

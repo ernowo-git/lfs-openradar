@@ -75,7 +75,49 @@ fn explicit_save_keeps_requested_scales_but_persists_displayed_positions() {
     assert_eq!(saved.wayland.radar.scale, 2.0);
     assert_eq!(saved.wayland.monitor.as_deref(), Some("DP-1"));
     assert!(saved.gap_ahead.enabled);
-    assert_eq!(session.status().gadgets.len(), 6);
+    assert_eq!(session.status().gadgets.len(), 8);
+}
+
+#[test]
+fn lap_records_use_native_placement_and_shared_painter() {
+    use lfs_openradar::overlay::session::Gadget;
+    let mut config = Config {
+        radar_enabled: false,
+        ..Config::default()
+    };
+    config.lap_records.enabled = true;
+    config.lap_records.scale = 0.5;
+    config.lap_records.window_x = Some(-800.0);
+    config.wayland.lap_records.x = Some(40.0);
+    config.wayland.lap_records.y = Some(80.0);
+    config.wayland.lap_records.scale = 1.25;
+    let mut session = OverlaySession::new(config, true);
+    session.outputs_changed(vec![Monitor {
+        name: "DP-1".into(),
+        size: [1920.0, 1080.0],
+        scale: 1.0,
+    }]);
+    let status = session.status();
+    assert!(status.visible);
+    let geometry = status
+        .gadgets
+        .iter()
+        .find(|g| g.gadget == Gadget::LapRecords)
+        .unwrap();
+    assert!(geometry.enabled);
+    assert_eq!(geometry.rect.min, eframe::egui::pos2(40.0, 80.0));
+    assert_eq!(geometry.scale, 1.25);
+    let snapshot = lfs_openradar::runtime::Snapshot {
+        lap_records: lfs_openradar::demo::lap_records_preview(),
+        ..Default::default()
+    };
+    let output = session.paint(&eframe::egui::Context::default(), &snapshot);
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, eframe::egui::Shape::Text(text) if text.galley.text() == "1:40.000")));
+    let saved = session.config_for_save();
+    assert_eq!(saved.lap_records.window_x, Some(-800.0));
+    assert_eq!(saved.lap_records.scale, 0.5);
+    assert_eq!(saved.wayland.lap_records.x, Some(40.0));
+    assert_eq!(saved.wayland.lap_records.scale, 1.25);
 }
 
 #[test]
@@ -147,4 +189,54 @@ fn native_failure_is_reported_without_losing_user_settings_and_retry_clears_it()
     assert_eq!(session.status().selected_monitor.as_deref(), Some("DP-1"));
     session.retry();
     assert!(session.status().error.is_none());
+}
+
+#[test]
+fn lap_log_alone_keeps_native_hud_visible_with_independent_placement_and_scale() {
+    use lfs_openradar::overlay::session::Gadget;
+    let mut config = Config {
+        radar_enabled: false,
+        ..Default::default()
+    };
+    config.lap_log.enabled = true;
+    config.lap_log.scale = 0.5;
+    config.lap_log.window_x = Some(-800.0);
+    config.wayland.lap_log.x = Some(40.0);
+    config.wayland.lap_log.y = Some(80.0);
+    config.wayland.lap_log.scale = 1.25;
+    let mut session = OverlaySession::new(config, true);
+    session.outputs_changed(vec![Monitor {
+        name: "DP-1".into(),
+        size: [1920.0, 1080.0],
+        scale: 1.5,
+    }]);
+    let status = session.status();
+    assert!(status.visible);
+    let geometry = status
+        .gadgets
+        .iter()
+        .find(|g| g.gadget == Gadget::LapLog)
+        .unwrap();
+    assert!(geometry.enabled);
+    assert_eq!(geometry.rect.min, eframe::egui::pos2(40.0, 80.0));
+    assert_eq!(geometry.scale, 1.25);
+    let snapshot = lfs_openradar::runtime::Snapshot {
+        lap_log: lfs_openradar::demo::lap_log_preview(),
+        ..Default::default()
+    };
+    let output = session.paint(&eframe::egui::Context::default(), &snapshot);
+    assert!(output.shapes.iter().any(|s| matches!(&s.shape, eframe::egui::Shape::Text(t) if t.galley.text() == "02:16.949" && t.galley.job.sections[0].format.font_id.size == 27.5)));
+    let saved = session.config_for_save();
+    assert_eq!(saved.lap_log.window_x, Some(-800.0));
+    assert_eq!(saved.lap_log.scale, 0.5);
+    assert_eq!(saved.wayland.lap_log.x, Some(40.0));
+    assert_eq!(saved.wayland.lap_log.scale, 1.25);
+    session.update(
+        Config {
+            radar_enabled: false,
+            ..Default::default()
+        },
+        true,
+    );
+    assert!(!session.status().visible);
 }

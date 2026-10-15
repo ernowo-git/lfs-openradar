@@ -19,6 +19,10 @@ mod graphics_log;
 mod gt7_style;
 #[cfg(feature = "desktop")]
 mod hotkey;
+#[cfg(feature = "desktop")]
+mod lap_log_style;
+#[cfg(feature = "desktop")]
+mod lap_records_style;
 #[cfg(all(target_os = "linux", feature = "native-wayland"))]
 pub mod native;
 #[cfg(feature = "desktop")]

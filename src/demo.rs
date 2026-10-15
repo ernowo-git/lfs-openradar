@@ -82,6 +82,7 @@ impl Demo {
                         Packet::Lap {
                             plid: 1,
                             time_ms: 100_000,
+                            elapsed_ms: 0,
                             penalty: 0,
                             laps_done: (tick / 100_000) as u16,
                         },
@@ -189,6 +190,8 @@ impl Demo {
             },
             connected: true,
             fuel: fuel_preview(),
+            lap_records: lap_records_preview(),
+            lap_log: lap_log_preview(),
             version: "synthetic".into(),
             frame,
             mci_sets: self.engine.mci_sets,
@@ -210,4 +213,49 @@ pub fn fuel_preview() -> crate::fuel::FuelFrame {
     };
     frame.estimates([0.14 / 12.9, 0.016, 0.009], Some(20.6));
     frame
+}
+
+/// PB and independent sectors deliberately come from different complete laps.
+pub fn lap_records_preview() -> crate::lap_records::LapRecordsFrame {
+    use crate::lap_records::{LapRecordsFrame, PersonalBest, Record};
+    LapRecordsFrame {
+        track: Some("BL1".into()),
+        car: Some("XFG".into()),
+        checkpoint_count: 2,
+        record: Some(Record {
+            checkpoint_count: 2,
+            best_sectors_ms: vec![29_000, 35_000, 35_000],
+            pb: PersonalBest {
+                checkpoints_ms: vec![30_000, 65_000],
+                lap_ms: 100_000,
+            },
+        }),
+        status: "Synthetic lap records preview".into(),
+    }
+}
+
+/// Reference contents with previous-lap deltas and GT appearance supplied by the painter.
+pub fn lap_log_preview() -> crate::lap_log::LapLogFrame {
+    use crate::lap_log::{Lap, LapLogFrame};
+    let values = [
+        (17, 136_949, Some(-202)),
+        (16, 137_151, Some(447)),
+        (15, 136_704, Some(-149)),
+        (14, 136_853, Some(-43_312)),
+        (13, 180_165, None),
+        (11, 142_291, Some(5_271)),
+        (10, 137_020, Some(180)),
+        (9, 136_840, Some(482)),
+    ];
+    LapLogFrame {
+        best_ms: Some(102_089),
+        laps: values
+            .into_iter()
+            .map(|(number, time_ms, delta_ms)| Lap {
+                number,
+                time_ms,
+                delta_ms,
+            })
+            .collect(),
+    }
 }

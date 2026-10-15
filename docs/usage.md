@@ -44,6 +44,52 @@ overlays when LFS is in the background. Windowed or borderless LFS is the initia
 target. See [platform status](#platform-status) for platform limitations and
 [graphics diagnostics](#graphics-diagnostics) for troubleshooting details.
 
+## Lap records
+
+Enable **Lap records** in Gadgets. The header identifies the current track and
+your car, such as **BL1 / XFG**. After connecting, cross the finish line to establish
+a lap boundary, then complete a lap with all checkpoints. Improved records save
+automatically, survive restarting OpenRadar, and stay separate for each track/car.
+
+- **PB LAP:** the fastest complete lap and that lap's cumulative checkpoint times.
+  On a three-sector track these are **S1**, **S1+S2**, and **LAP**.
+- **BEST:** each fastest individual sector and **THEORETICAL**, the sum of those
+  best sectors. Sectors can come from different complete laps, so this theoretical
+  best lap is not necessarily a lap you have driven.
+
+The column count adapts to tracks with one through four sectors. Missing times
+show a dash. Invalid-lap flags and penalties are deliberately ignored for these
+local timing records. Replays, AI and other drivers are excluded. Camera changes
+do not change whose records are saved. Custom/no timing is unsupported; resets,
+garage re-entry, reconnects, and identity/layout changes discard the pending lap
+while keeping saved records. A later complete lap resumes recording.
+
+Lap records have their own Position mode, X/Y and scale controls on both overlay
+backends. **Save settings** remembers placement; it is not needed to save a PB.
+If a save error appears, records remain in memory and retry automatically.
+
+## Lap-time log
+
+Enable **Lap-time log** in Gadgets. **SESSION BEST** shows the fastest completed
+lap in the current LFS session. **LAP**, **TIME** and **DELTA** show the latest
+eight completed laps, newest first. Delta compares with the previous recorded
+lap, rather than the session best: blue negative values mean faster, red positive
+values mean slower. Missing comparisons show a dash. Road temperature is omitted.
+The gadget always uses the existing GT fonts, colors and translucent backgrounds.
+
+All recorded laps stay in memory for this session, including those outside the
+eight visible rows. Pitting, hiding/disabling the gadget and brief reconnects
+preserve completed history. A new session, track/car or layout change clears it;
+closing OpenRadar discards it. **Save settings** saves only gadget preferences.
+
+Recording uses the local human driver's complete standard-timing lap sequences,
+including laps with invalid-lap flags or penalties, as for Lap records. Replays,
+AI and opponents are excluded. When connecting mid-lap, cross the finish line to
+establish a boundary, then complete a lap with all checkpoints. A witnessed race
+start permits recording the first full lap. Interrupted timing discards the
+pending lap and leaves the next comparison unavailable; session best survives.
+Independent Position mode, X/Y and scale controls work on both overlay backends.
+
 ## HUD styles
 
 Choose **Classic** or **GT** from **HUD style** at the top of the

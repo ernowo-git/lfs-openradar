@@ -312,6 +312,7 @@ fn opponent_events_and_roster_replies_preserve_local_delta_and_neighbor_gaps() {
                 engine
                     .packet(
                         Packet::Lap {
+                            elapsed_ms: 0,
                             plid: 1,
                             laps_done: 1,
                             time_ms: 4000,
@@ -384,6 +385,7 @@ fn transient_pose_mismatch_or_missing_local_mci_recovers_without_restarting_the_
                 engine
                     .packet(
                         Packet::Lap {
+                            elapsed_ms: 0,
                             plid: 1,
                             laps_done: 1,
                             time_ms: 4000,
@@ -443,6 +445,7 @@ fn local_resets_and_teleports_discard_recording_but_opponent_teleports_do_not() 
                 engine
                     .packet(
                         Packet::Lap {
+                            elapsed_ms: 0,
                             plid: 1,
                             laps_done: 1,
                             time_ms: 4000,
@@ -591,6 +594,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
             engine
                 .packet(
                     Packet::Lap {
+                        elapsed_ms: 0,
                         plid: 1,
                         laps_done: 1,
                         time_ms: 4000,
@@ -700,6 +704,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                     Packet::Split {
                         plid: 1,
                         time_ms: if progress == 10 { 2000 } else { 1000 },
+                        elapsed_ms: 0,
                         split: 1,
                         penalty: 0,
                     },
@@ -711,6 +716,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
             engine
                 .packet(
                     Packet::Lap {
+                        elapsed_ms: 0,
                         plid: 1,
                         laps_done: 1,
                         time_ms: if progress == 40 { 5000 } else { 4000 },
@@ -726,6 +732,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                     Packet::Split {
                         plid: 2,
                         time_ms: 1,
+                        elapsed_ms: 0,
                         split: 1,
                         penalty: 1,
                     },
@@ -737,6 +744,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                     Packet::Split {
                         plid: 1,
                         time_ms: 1,
+                        elapsed_ms: 0,
                         split: 2,
                         penalty: 1,
                     },
@@ -856,6 +864,7 @@ fn lap_and_validity_packets_validate_lengths_and_request_hlvc() {
     assert!(matches!(
         insim::decode(&lap).unwrap(),
         Packet::Lap {
+            elapsed_ms: 0,
             plid: 1,
             laps_done: 1,
             time_ms: 45678,
