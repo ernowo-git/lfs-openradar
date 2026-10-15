@@ -136,6 +136,8 @@ struct App {
     config: Config,
     config_path: PathBuf,
     runtime: Option<Runtime>,
+    config_store: Option<crate::config::SharedConfigStore>,
+    lap_log: crate::lap_log::SharedLapLog,
     demo: Option<Demo>,
     started: Instant,
     seconds: Option<u64>,
@@ -153,7 +155,7 @@ struct App {
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
-    gap_overlays: [GapOverlay; 5],
+    gap_overlays: [GapOverlay; 7],
     tab: ControlTab,
     opening_layout_passes: u8,
 }
@@ -228,6 +230,8 @@ impl App {
             GapOverlay::new(&config.performance_delta, &overlay_data),
             GapOverlay::new(&config.speed_dashboard, &overlay_data),
             GapOverlay::new(&config.fuel, &overlay_data),
+            GapOverlay::new(&config.lap_records, &overlay_data),
+            GapOverlay::new(&config.lap_log, &overlay_data),
         ];
         let mut app = Self {
             initial_backend: config.overlay_backend,
@@ -246,6 +250,8 @@ impl App {
             config,
             config_path,
             runtime: None,
+            config_store: None,
+            lap_log: Default::default(),
             demo: demo.then(Demo::default),
             started,
             seconds,
@@ -333,9 +339,20 @@ impl App {
         // Drop joins the old worker and releases its UDP port before restarting.
         self.set_source(OverlaySource::Disconnected);
         self.runtime = None;
-        match Runtime::start_with_password(
+        if self.config_store.is_none() {
+            match crate::config::ConfigStore::open(&self.config_path) {
+                Ok(store) => self.config_store = Some(store),
+                Err(error) => {
+                    self.message = Some(error);
+                    return;
+                }
+            }
+        }
+        match Runtime::start_with_session(
             self.config.clone(),
             self.config.insim_password.0.clone(),
+            self.config_store.clone(),
+            self.lap_log.clone(),
         ) {
             Ok(runtime) => {
                 self.set_source(OverlaySource::Live(runtime.snapshot_reader()));
@@ -344,6 +361,17 @@ impl App {
             }
             Err(error) => self.message = Some(error),
         }
+    }
+    fn save_settings(&mut self) -> Result<(), String> {
+        if self.config_store.is_none() {
+            self.config_store = Some(crate::config::ConfigStore::open(&self.config_path)?);
+        }
+        self.config_store
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .save_settings(&self.config)
     }
     fn apply_startup_setup(&mut self, plan: crate::setup::SetupPlan) {
         self.setup_message = Some(match crate::setup::apply(&plan) {
@@ -510,6 +538,8 @@ impl App {
             &mut self.config.performance_delta,
             &mut self.config.speed_dashboard,
             &mut self.config.fuel,
+            &mut self.config.lap_records,
+            &mut self.config.lap_log,
         ]) {
             if let Ok(mut feedback) = gap.feedback.lock() {
                 if let Some(position) = feedback.moved_to.take() {
@@ -555,12 +585,26 @@ impl App {
                     "speed-dashboard-overlay",
                     "LFS OpenRadar · Speed dashboard",
                 )
-            } else {
+            } else if index == 4 {
                 (
                     Gadget::Fuel,
                     &self.config.fuel,
                     "fuel-overlay",
                     "LFS OpenRadar · Fuel",
+                )
+            } else if index == 5 {
+                (
+                    Gadget::LapRecords,
+                    &self.config.lap_records,
+                    "lap-records-overlay",
+                    "LFS OpenRadar · Lap records",
+                )
+            } else {
+                (
+                    Gadget::LapLog,
+                    &self.config.lap_log,
+                    "lap-log-overlay",
+                    "LFS OpenRadar · Lap-time log",
                 )
             };
             let visible = overlay_visible(
@@ -603,6 +647,8 @@ impl App {
                     match kind {
                         Gadget::Dashboard => super::speed_dashboard::SIZE,
                         Gadget::Fuel => super::fuel_style::SIZE,
+                        Gadget::LapRecords => super::lap_records_style::SIZE,
+                        Gadget::LapLog => super::lap_log_style::SIZE,
                         Gadget::Delta => theme.delta.panel.size,
                         Gadget::Ahead => theme.ahead.panel.size,
                         Gadget::Behind => theme.behind.panel.size,
@@ -696,7 +742,7 @@ impl App {
                             );
                             self.config = native.config_for_save();
                         }
-                        self.message = Some(match self.config.save(&self.config_path) {
+                        self.message = Some(match self.save_settings() {
                             Ok(()) => format!("Saved {}", self.config_path.display()),
                             Err(error) => error,
                         });
@@ -729,6 +775,9 @@ impl App {
                         ui.label(driver);
                     }
                 });
+                if let Some(error) = &snapshot.lap_records_error {
+                    ui.colored_label(Color32::from_rgb(255, 180, 120), error);
+                }
                 if let Some(message) = self.message.as_ref().or(snapshot.error.as_ref()) {
                     ui.colored_label(Color32::from_rgb(255, 180, 120), message);
                 }
@@ -1171,6 +1220,27 @@ impl App {
                                             ui.add(egui::Slider::new(&mut self.config.fuel.scale, 0.5..=2.0).text("Scale"));
                                             ui.label(egui::RichText::new("REFUEL is additional tank %. * means more than one stop. Usage uses up to 5 full laps; timed-race finish estimates are unavailable.").small());
                                         }
+                                        Gadget::LapLog => {
+                                            ui.checkbox(&mut self.config.lap_log.enabled, "Enabled");
+                                            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 185.0), egui::Sense::hover());
+                                            super::lap_log_style::paint(ui.painter(), rect, &snapshot.lap_log);
+                                            let gap = &mut self.gap_overlays[6];
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            gap_position_controls(ui, &mut self.config.lap_log, &mut gap.window, gap.editing);
+                                            ui.add(egui::Slider::new(&mut self.config.lap_log.scale, 0.5..=2.0).text("Scale"));
+                                            ui.label(egui::RichText::new("Latest 8 completed laps. Delta compares with the previous lap. History lasts for this LFS session; pits and reconnects keep completed laps.").small());
+                                        }
+                                        Gadget::LapRecords => {
+                                            ui.checkbox(&mut self.config.lap_records.enabled, "Enabled");
+                                            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 130.0), egui::Sense::hover());
+                                            super::lap_records_style::paint(ui.painter(), rect, &snapshot.lap_records);
+                                            ui.label(egui::RichText::new(&snapshot.lap_records.status).small());
+                                            let gap = &mut self.gap_overlays[5];
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            gap_position_controls(ui, &mut self.config.lap_records, &mut gap.window, gap.editing);
+                                            ui.add(egui::Slider::new(&mut self.config.lap_records.scale, 0.5..=2.0).text("Scale"));
+                                            ui.label(egui::RichText::new("PB keeps one lap's cumulative splits. BEST shows each fastest sector and their sum as the theoretical best lap. Records save per track and car; invalid-lap flags are ignored.").small());
+                                        }
                                         Gadget::Radar => {
                                             ui.checkbox(&mut self.config.radar_enabled, "Enabled");
                                             let (rect, _) = ui.allocate_exact_size(
@@ -1278,6 +1348,8 @@ const GADGETS: &[Gadget] = &[
     Gadget::Behind,
     Gadget::Delta,
     Gadget::Fuel,
+    Gadget::LapRecords,
+    Gadget::LapLog,
 ];
 impl Gadget {
     fn title(self) -> &'static str {
@@ -1288,6 +1360,8 @@ impl Gadget {
             Self::Delta => "Performance delta",
             Self::Dashboard => "Speed dashboard",
             Self::Fuel => "Fuel",
+            Self::LapRecords => "Lap records",
+            Self::LapLog => "Lap-time log",
         }
     }
 }
@@ -1540,6 +1614,24 @@ fn render_gap_overlay(
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
     let theme = theme::resolve(data.config.hud_style);
+    if kind == Gadget::LapLog {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                super::lap_log_style::paint(ui.painter(), ui.max_rect(), &snapshot.lap_log);
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
+    if kind == Gadget::LapRecords {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                super::lap_records_style::paint(ui.painter(), ui.max_rect(), &snapshot.lap_records);
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
     if kind == Gadget::Fuel {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -2575,6 +2667,8 @@ mod tests {
             &mut config.performance_delta,
             &mut config.speed_dashboard,
             &mut config.fuel,
+            &mut config.lap_records,
+            &mut config.lap_log,
         ]
         .into_iter()
         .enumerate()
@@ -2600,6 +2694,8 @@ mod tests {
             Pos2::new(620.0, 300.0),
             Pos2::new(900.0, 360.0),
             Pos2::new(1200.0, 420.0),
+            Pos2::new(1400.0, 480.0),
+            Pos2::new(1600.0, 540.0),
         ];
         // Exercise native viewport geometry -> shared paint feedback -> config.
         // A missing OS position must retain the last observed coordinates.
@@ -2686,6 +2782,8 @@ mod tests {
             &restored.performance_delta,
             &restored.speed_dashboard,
             &restored.fuel,
+            &restored.lap_records,
+            &restored.lap_log,
         ]
         .into_iter()
         .enumerate()
@@ -3236,6 +3334,73 @@ mod tests {
         assert_eq!(app.config.performance_delta.window_x, Some(-800.0));
         assert!(!app.config.performance_delta.enabled);
         assert!(app.config.gap_ahead.enabled && app.config.radar_enabled);
+    }
+
+    #[test]
+    fn lap_records_and_log_viewports_refresh_and_close_independently() {
+        for (is_log, index, name, size, expected) in [
+            (
+                false,
+                5,
+                "lap-records-overlay",
+                super::super::lap_records_style::SIZE,
+                "1:40.000",
+            ),
+            (
+                true,
+                6,
+                "lap-log-overlay",
+                super::super::lap_log_style::SIZE,
+                "02:16.949",
+            ),
+        ] {
+            let ctx = egui::Context::default();
+            super::super::fonts::install(&ctx);
+            ctx.set_embed_viewports(false);
+            let mut config = Config::default();
+            config.lap_records.enabled = !is_log;
+            config.lap_log.enabled = is_log;
+            let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+            app.gap_overlays[index].editing = true;
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                app.show_gap_overlays(ctx, true)
+            });
+            let id = ViewportId::from_hash_of(name);
+            assert_eq!(output.viewport_output[&id].builder.decorations, Some(true));
+            assert_eq!(output.viewport_output[&id].builder.inner_size, Some(size));
+            let callback = output.viewport_output[&id].viewport_ui_cb.clone().unwrap();
+            let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
+            let mut input = egui::RawInput {
+                viewport_id: id,
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                ..Default::default()
+            };
+            input.viewports.insert(
+                id,
+                egui::ViewportInfo {
+                    parent: Some(ViewportId::ROOT),
+                    ..Default::default()
+                },
+            );
+            let output = ctx.run(input, |child| callback(child));
+            assert!(output.shapes.iter().any(
+                |shape| matches!(&shape.shape, Shape::Text(text) if text.galley.text() == expected)
+            ));
+            assert!(output.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
+            assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
+            app.gap_overlays[index].feedback.lock().unwrap().moved_to =
+                Some(Pos2::new(-800.0, 440.0));
+            app.gap_overlays[index].feedback.lock().unwrap().closed = true;
+            app.receive_overlay_feedback();
+            let settings = if is_log {
+                &app.config.lap_log
+            } else {
+                &app.config.lap_records
+            };
+            assert_eq!(settings.window_x, Some(-800.0));
+            assert!(!settings.enabled);
+            assert!(app.config.radar_enabled);
+        }
     }
 
     #[test]

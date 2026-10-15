@@ -91,6 +91,7 @@ fn refuel(value: Option<f64>, multiple: bool) -> String {
 }
 
 pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &FuelFrame) {
+    let state = indicator(frame);
     let scale = (rect.width() / SIZE.x).min(rect.height() / SIZE.y);
     let origin = rect.center() - SIZE * scale * 0.5;
     let point = |x, y| origin + Vec2::new(x, y) * scale;
@@ -118,7 +119,15 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &FuelFrame) {
     );
     painter.line_segment(
         [point(0.0, 66.5), point(SIZE.x, 66.5)],
-        Stroke::new(scale, GREEN),
+        Stroke::new(
+            scale,
+            match state {
+                Indicator::Safe => GREEN,
+                Indicator::Warning => Color32::from_rgb(254, 234, 81),
+                Indicator::Danger => Color32::from_rgb(233, 48, 74),
+                Indicator::Unknown => Color32::GRAY,
+            },
+        ),
     );
     text(
         16.0,
@@ -208,7 +217,6 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &FuelFrame) {
             WHITE,
         );
     }
-    let state = indicator(frame);
     let badge_rect = if state == Indicator::Unknown {
         painter.circle_filled(point(480.6, 111.3), 21.7 * scale, Color32::GRAY);
         panel(469.7, 100.5, 21.7, 21.7)
@@ -268,17 +276,32 @@ mod tests {
         assert_eq!(indicator(&frame), Indicator::Unknown);
 
         let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
         for (state, color) in [
             (Indicator::Safe, Color32::from_rgb(9, 182, 26)),
             (Indicator::Warning, Color32::from_rgb(254, 234, 81)),
             (Indicator::Danger, Color32::from_rgb(233, 48, 74)),
         ] {
             let mut id = None;
+            let mut preview = crate::demo::fuel_preview();
+            preview.rows[0].laps = Some(match state {
+                Indicator::Safe => 12.9,
+                Indicator::Warning => 1.5,
+                Indicator::Danger => 0.5,
+                Indicator::Unknown => unreachable!(),
+            });
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 let texture = badge_texture(ctx, state, 32.0);
                 assert_eq!(texture.id(), badge_texture(ctx, state, 32.0).id());
                 id = Some(texture.id());
+                paint(
+                    &ctx.layer_painter(egui::LayerId::background()),
+                    Rect::from_min_size(egui::Pos2::ZERO, SIZE),
+                    &preview,
+                );
             });
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::LineSegment { stroke, .. } if stroke.color == color)));
             let (_, delta) = output
                 .textures_delta
                 .set

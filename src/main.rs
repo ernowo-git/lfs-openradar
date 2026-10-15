@@ -91,7 +91,11 @@ fn run() -> Result<(), String> {
         let runtime = if options.demo {
             None
         } else {
-            Some(Runtime::start(config.clone())?)
+            Some(Runtime::start_with_store(
+                config.clone(),
+                config.effective_insim_password(),
+                Some(lfs_openradar::config::ConfigStore::open(&path)?),
+            )?)
         };
         let mut demo = options.demo.then(Demo::default);
         let start = Instant::now();
@@ -139,6 +143,30 @@ fn run() -> Result<(), String> {
                     if let Some(error) = &snapshot.outgauge_error {
                         eprintln!("outgauge: {error}");
                     }
+                }
+                if config.lap_log.enabled {
+                    println!(
+                        "Lap-time log: best={:?}ms latest={:?}",
+                        snapshot.lap_log.best_ms,
+                        snapshot.lap_log.laps.first()
+                    );
+                }
+                if config.lap_records.enabled {
+                    println!(
+                        "Lap records: {} | {} / {} PB={:?}ms sectors={:?}ms",
+                        snapshot.lap_records.status,
+                        snapshot.lap_records.track.as_deref().unwrap_or("—"),
+                        snapshot.lap_records.car.as_deref().unwrap_or("—"),
+                        snapshot.lap_records.record.as_ref().map(|r| r.pb.lap_ms),
+                        snapshot
+                            .lap_records
+                            .record
+                            .as_ref()
+                            .map(|r| &r.best_sectors_ms)
+                    );
+                }
+                if let Some(error) = &snapshot.lap_records_error {
+                    eprintln!("{error}");
                 }
                 if let Some(error) = &snapshot.error {
                     eprintln!("{error}");

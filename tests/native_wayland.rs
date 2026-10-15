@@ -145,10 +145,11 @@ fn native_presentation_recovers_missing_selection_show_and_retry() {
 
 #[test]
 #[ignore = "requires real XWayland and Wayland GPU presentation"]
-fn actual_panel_and_native_six_gadget_overlay_coexist_in_demo_mode() {
+fn actual_panel_and_native_eight_gadget_overlay_coexist_in_demo_mode() {
     let path =
         std::env::temp_dir().join(format!("openradar-native-app-{}.toml", std::process::id()));
     let config = Config {
+        overlay_toggle_key: "None".into(),
         gap_ahead: lfs_openradar::config::GapSettings {
             enabled: true,
             ..Default::default()
@@ -166,6 +167,14 @@ fn actual_panel_and_native_six_gadget_overlay_coexist_in_demo_mode() {
             ..Default::default()
         },
         fuel: lfs_openradar::config::GapSettings {
+            enabled: true,
+            ..Default::default()
+        },
+        lap_log: lfs_openradar::config::GapSettings {
+            enabled: true,
+            ..Default::default()
+        },
+        lap_records: lfs_openradar::config::GapSettings {
             enabled: true,
             ..Default::default()
         },

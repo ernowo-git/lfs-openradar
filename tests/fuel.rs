@@ -343,6 +343,7 @@ fn engine_fuel_works_without_outsim_and_preserves_only_the_same_drivers_history(
                     Packet::Lap {
                         plid: 1,
                         time_ms: 1000,
+                        elapsed_ms: 0,
                         penalty: 0,
                         laps_done: (now / 1000) as u16,
                     },

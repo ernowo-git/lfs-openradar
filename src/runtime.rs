@@ -28,6 +28,9 @@ pub struct Snapshot {
     pub delta: crate::delta::DeltaFrame,
     pub dashboard: crate::dashboard::DashboardFrame,
     pub fuel: crate::fuel::FuelFrame,
+    pub lap_records: crate::lap_records::LapRecordsFrame,
+    pub lap_log: crate::lap_log::LapLogFrame,
+    pub lap_records_error: Option<String>,
     pub outgauge_error: Option<String>,
     pub outgauge_forward_error: Option<String>,
     pub error: Option<String>,
@@ -61,6 +64,23 @@ impl Runtime {
 
     /// An explicit password overrides the TOML/environment value for this connection.
     pub fn start_with_password(config: Config, password: String) -> Result<Self, String> {
+        Self::start_with_store(config, password, None)
+    }
+
+    pub fn start_with_store(
+        config: Config,
+        password: String,
+        store: Option<crate::config::SharedConfigStore>,
+    ) -> Result<Self, String> {
+        Self::start_with_session(config, password, store, Default::default())
+    }
+
+    pub fn start_with_session(
+        config: Config,
+        password: String,
+        store: Option<crate::config::SharedConfigStore>,
+        lap_log: crate::lap_log::SharedLapLog,
+    ) -> Result<Self, String> {
         config.validate()?;
         let initial = insim::init(config.mci_interval_ms, &password)?;
         let udp = UdpSocket::bind(config.outsim_bind).map_err(|e| {
@@ -77,7 +97,7 @@ impl Runtime {
         let worker = thread::Builder::new()
             .name("lfs-telemetry".into())
             .spawn(move || {
-                run(config, initial, udp, output, quit);
+                run(config, initial, udp, output, quit, store, lap_log);
             })
             .map_err(|e| e.to_string())?;
         Ok(Self {
@@ -150,9 +170,19 @@ fn run(
     udp: UdpSocket,
     output: Arc<Mutex<Snapshot>>,
     stop: Arc<AtomicBool>,
+    store: Option<crate::config::SharedConfigStore>,
+    lap_log: crate::lap_log::SharedLapLog,
 ) {
     let start = Instant::now();
     let mut engine = Engine::new(config.follow_viewed_car);
+    engine.lap_records = crate::lap_records::Recorder::with_records(
+        store
+            .as_ref()
+            .map(|s| s.lock().unwrap().records.clone())
+            .unwrap_or_else(|| config.track_records.clone()),
+    );
+    engine.lap_records.lap_log = lap_log;
+    let mut retry_records_at = 0;
     let mut stats = Snapshot::default();
     let mut dashboard = crate::dashboard::DashboardTelemetry::default();
     let gauge = if config.needs_outgauge() && config.outgauge_bind != config.outsim_bind {
@@ -461,6 +491,28 @@ fn run(
         let render_now = start.elapsed().as_millis() as u64;
         stats.dashboard = dashboard.frame(render_now, &config, engine.dashboard_player());
         stats.fuel = engine.fuel(render_now, &config);
+        if let Some(store) = &store {
+            // ponytail: occasional config writes run here; move I/O off-thread if slow storage stalls telemetry.
+            let mut store = store.lock().unwrap();
+            if let Some(records) = engine.lap_records.take_changes() {
+                store.update_records(records);
+                retry_records_at = render_now + 2000;
+            } else if render_now >= retry_records_at {
+                store.flush();
+                retry_records_at = render_now + 2000;
+            }
+            if stats.lap_records_error != store.error {
+                if let Some(error) = &store.error {
+                    #[cfg(feature = "desktop")]
+                    log::error!("{error}");
+                    #[cfg(not(feature = "desktop"))]
+                    eprintln!("{error}");
+                }
+                stats.lap_records_error = store.error.clone();
+            }
+        }
+        stats.lap_records = engine.lap_records.frame();
+        stats.lap_log = engine.lap_records.lap_log.lock().unwrap().frame();
         stats.connected = protocol_ready;
         stats.frame = engine.frame(render_now, &config);
         stats.gaps = engine.gaps(render_now, &config, &stats.frame);
@@ -476,5 +528,12 @@ fn run(
     }
     if let Some(mut stream) = connection {
         let _ = stream.write_all(&insim::tiny(2, 0));
+    }
+    if let Some(store) = &store {
+        let mut store = store.lock().unwrap();
+        if let Some(records) = engine.lap_records.take_changes() {
+            store.update_records(records);
+        }
+        store.flush();
     }
 }

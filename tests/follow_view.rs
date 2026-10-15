@@ -97,6 +97,7 @@ fn record(e: &mut Engine, event: Option<Packet>) {
         if p == 80 {
             e.packet(
                 Packet::Lap {
+                    elapsed_ms: 0,
                     plid: 2,
                     laps_done: 1,
                     time_ms: 4000,
@@ -189,6 +190,7 @@ fn another_viewed_ai_builds_its_own_reference_after_switching() {
         if p == 118 {
             e.packet(
                 Packet::Lap {
+                    elapsed_ms: 0,
                     plid: 1,
                     laps_done: 1,
                     time_ms: 5000,
@@ -233,6 +235,7 @@ fn opponent_lifecycle_and_roster_refresh_do_not_break_reference_recording() {
         Packet::Player(driver(1)),
         Packet::PlayerSnapshot(driver(2)),
         Packet::Lap {
+            elapsed_ms: 0,
             plid: 1,
             laps_done: 1,
             time_ms: 1,

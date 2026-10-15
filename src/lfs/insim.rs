@@ -86,12 +86,14 @@ pub enum Packet {
     Lap {
         plid: u8,
         time_ms: u32,
+        elapsed_ms: u32,
         penalty: u8,
         laps_done: u16,
     },
     Split {
         plid: u8,
         time_ms: u32,
+        elapsed_ms: u32,
         split: u8,
         penalty: u8,
     },
@@ -255,6 +257,7 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
             Packet::Lap {
                 plid: p[3],
                 time_ms: u32_at(p, 4),
+                elapsed_ms: u32_at(p, 8),
                 penalty: p[17],
                 laps_done: u16_at(p, 12),
             }
@@ -264,6 +267,7 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
             Packet::Split {
                 plid: p[3],
                 time_ms: u32_at(p, 4),
+                elapsed_ms: u32_at(p, 8),
                 split: p[12],
                 penalty: p[13],
             }

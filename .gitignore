@@ -4,6 +4,8 @@
 __pycache__/
 *.py[cod]
 /openradar.local.toml
+*.toml.lock
+*.toml.*.tmp
 /demo-preview.png
 /openradar.graphics.log
 /.env

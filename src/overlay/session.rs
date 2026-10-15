@@ -31,6 +31,8 @@ pub enum Gadget {
     Delta,
     Dashboard,
     Fuel,
+    LapRecords,
+    LapLog,
 }
 
 impl Gadget {
@@ -45,6 +47,8 @@ impl Gadget {
             Self::Delta => Some(&mut config.performance_delta),
             Self::Dashboard => Some(&mut config.speed_dashboard),
             Self::Fuel => Some(&mut config.fuel),
+            Self::LapRecords => Some(&mut config.lap_records),
+            Self::LapLog => Some(&mut config.lap_log),
         }
     }
     pub fn placement(self, config: &Config) -> &GadgetPlacement {
@@ -55,6 +59,8 @@ impl Gadget {
             Self::Delta => &config.wayland.performance_delta,
             Self::Dashboard => &config.wayland.speed_dashboard,
             Self::Fuel => &config.wayland.fuel,
+            Self::LapRecords => &config.wayland.lap_records,
+            Self::LapLog => &config.wayland.lap_log,
         }
     }
     pub fn placement_mut(self, config: &mut Config) -> &mut GadgetPlacement {
@@ -65,6 +71,8 @@ impl Gadget {
             Self::Delta => &mut config.wayland.performance_delta,
             Self::Dashboard => &mut config.wayland.speed_dashboard,
             Self::Fuel => &mut config.wayland.fuel,
+            Self::LapRecords => &mut config.wayland.lap_records,
+            Self::LapLog => &mut config.wayland.lap_log,
         }
     }
 }
@@ -192,6 +200,14 @@ impl OverlaySession {
                         &config,
                     ),
                     Gadget::Fuel => fuel_style::paint(&painter, geometry.rect, &snapshot.fuel),
+                    Gadget::LapLog => {
+                        super::lap_log_style::paint(&painter, geometry.rect, &snapshot.lap_log)
+                    }
+                    Gadget::LapRecords => super::lap_records_style::paint(
+                        &painter,
+                        geometry.rect,
+                        &snapshot.lap_records,
+                    ),
                 }
             }
         })
@@ -271,6 +287,8 @@ impl OverlaySession {
             theme.delta.panel.size,
             super::speed_dashboard::SIZE,
             super::fuel_style::SIZE,
+            super::lap_records_style::SIZE,
+            super::lap_log_style::SIZE,
         ];
         let enabled_flags = [
             self.config.radar_enabled,
@@ -279,6 +297,8 @@ impl OverlaySession {
             self.config.performance_delta.enabled,
             self.config.speed_dashboard.enabled,
             self.config.fuel.enabled,
+            self.config.lap_records.enabled,
+            self.config.lap_log.enabled,
         ];
         let mut gadgets = Vec::new();
         if available {
@@ -289,6 +309,8 @@ impl OverlaySession {
                 Gadget::Delta,
                 Gadget::Dashboard,
                 Gadget::Fuel,
+                Gadget::LapRecords,
+                Gadget::LapLog,
             ]
             .into_iter()
             .enumerate()
@@ -317,6 +339,11 @@ impl OverlaySession {
                         logical_size.y - size.y - 24.0,
                     ),
                     Gadget::Fuel => Vec2::new(24.0, logical_size.y - size.y - 24.0),
+                    Gadget::LapRecords => Vec2::new(logical_size.x - size.x - 24.0, 24.0),
+                    Gadget::LapLog => Vec2::new(
+                        logical_size.x - size.x - 24.0,
+                        24.0 + sizes[6].y * self.config.wayland.lap_records.scale + 8.0,
+                    ),
                 };
                 let position = Pos2::new(
                     placement
@@ -341,7 +368,9 @@ impl OverlaySession {
             || self.config.gap_behind.enabled
             || self.config.performance_delta.enabled
             || self.config.speed_dashboard.enabled
-            || self.config.fuel.enabled;
+            || self.config.fuel.enabled
+            || self.config.lap_records.enabled
+            || self.config.lap_log.enabled;
         OverlayStatus {
             ready: self.ready && available && self.error.is_none(),
             selected_monitor: selected,

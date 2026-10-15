@@ -81,6 +81,20 @@ window_x = 376.0
 window_y = 746.0
 scale = 1.0
 
+# PB cumulative splits and independent best sectors, saved per track and car.
+[lap_records]
+enabled = false
+window_x = 376.0
+window_y = 986.0
+scale = 1.0
+
+# Latest eight session laps; history is kept only in memory.
+[lap_log]
+enabled = false
+window_x = 1100.0
+window_y = 260.0
+scale = 1.0
+
 # Car settings by LFS car code (or six-digit vehicle mod ID).
 [cars.XFG]
 name = "XF GTI"

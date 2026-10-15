@@ -85,6 +85,7 @@ pub struct Engine {
     follow_viewed_car: bool,
     delta: crate::delta::DeltaEngine,
     fuel: crate::fuel::FuelEngine,
+    pub lap_records: crate::lap_records::Recorder,
     gaps: GapEngine,
     players: BTreeMap<u8, Player>,
     state: Option<State>,
@@ -110,6 +111,7 @@ impl Engine {
         }
     }
     pub fn clear(&mut self) {
+        self.lap_records.disconnect();
         self.delta.clear();
         self.fuel.clear();
         self.delta_association = None;
@@ -200,6 +202,7 @@ impl Engine {
         }
     }
     pub fn packet(&mut self, packet: Packet, time: u64) -> Result<(), String> {
+        self.lap_records.packet(&packet);
         match packet {
             Packet::State(state) => {
                 if self.state.as_ref().is_some_and(|old| {
@@ -304,6 +307,7 @@ impl Engine {
                 time_ms,
                 penalty,
                 laps_done,
+                ..
             } => {
                 if self.selected == Some(plid) {
                     self.delta.lap_report(time_ms, penalty, time);
@@ -410,6 +414,7 @@ impl Engine {
             }
             _ => {}
         }
+        self.lap_records.select_driver(self.players.values());
         let selected = self.select_driver();
         self.delta.select_driver(
             selected

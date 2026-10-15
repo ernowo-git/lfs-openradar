@@ -10,7 +10,7 @@ OpenRadar displays driving information from Live for Speed through independently
 OpenRadar's collection of driving-information gadgets displayed over the game.
 
 **Gadget**:
-One independently positioned and scaled HUD element: Radar, Gap Ahead, Gap Behind, Performance Delta, Speed dashboard, or Fuel.
+One independently positioned and scaled HUD element: Radar, Gap Ahead, Gap Behind, Performance Delta, Speed dashboard, Fuel, Lap records, or Lap-time log.
 
 **HUD style**:
 The selected visual appearance of the gadgets, currently Classic or GT.
@@ -76,3 +76,29 @@ The user's manual preference to show or hide the HUD as a whole, independent of 
 
 **Visible gadget**:
 A gadget currently presented on screen. An enabled gadget may be hidden by the Show overlays preference, an unavailable selected monitor, or an overlay failure.
+
+### Lap records
+
+**PB lap**:
+The local human driver's fastest recorded complete lap for one track and car, together with that lap's cumulative checkpoint times. Invalid-lap flags do not disqualify these personal timing records.
+
+**Best sectors**:
+The fastest individual sector durations across recorded complete laps for one track and car. Each sector can come from a different lap.
+
+**Theoretical best lap**:
+The sum of the best sectors for one track and car. It may combine sectors from different laps and need not be a lap the driver has completed.
+
+**Cumulative split**:
+The elapsed lap time at a checkpoint, such as S1+S2 at the second checkpoint.
+
+### Lap-time log
+
+**Lap-time log**:
+Completed laps for the local human driver in the current LFS session. The HUD
+shows the latest eight laps, newest first, plus the session best. History stays
+in memory through pits and reconnects and clears on a new session, track/car
+change, or application exit.
+
+**Previous-lap delta**:
+A completed lap's time minus the preceding recorded lap's time. Negative is
+faster; positive is slower. A timing interruption leaves the next delta unavailable.
