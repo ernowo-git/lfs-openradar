@@ -158,10 +158,13 @@ struct App {
     gap_overlays: [GapOverlay; 7],
     tab: ControlTab,
     opening_layout_passes: u8,
+    recording_directory: String,
+    recording_track: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ControlTab {
+    Recording,
     Gadgets,
     Settings,
 }
@@ -267,6 +270,8 @@ impl App {
             edit_overlay: false,
             tab: ControlTab::Gadgets,
             opening_layout_passes: 0,
+            recording_directory: "recordings".into(),
+            recording_track: "BL1".into(),
         };
         if !demo {
             app.connect();
@@ -504,7 +509,7 @@ impl App {
                 } else {
                     match crate::setup::prepare_outgauge(std::path::Path::new(self.config.lfs_directory.trim()), &self.config)
                         .and_then(|plan| crate::setup::apply_outsim(&plan)) {
-                        Ok(result) => format!("OutGauge configured in {}. Start LFS and enable Speed dashboard, Fuel, or OutGauge forwarding.", result.cfg_path.display()),
+                        Ok(result) => format!("OutGauge configured in {}. Start LFS and enable Speed dashboard, Fuel, OutGauge forwarding, or local recording.", result.cfg_path.display()),
                         Err(error) => error,
                     }
                 });
@@ -727,7 +732,11 @@ impl App {
                     });
                     ui.add_space(12.0);
                     if ui
-                        .add_enabled(self.demo.is_none(), egui::Button::new("Apply / reconnect"))
+                        .add_enabled(
+                            self.demo.is_none()
+                                && !self.runtime.as_ref().is_some_and(|r| r.recording_open()),
+                            egui::Button::new("Apply / reconnect"),
+                        )
                         .clicked()
                     {
                         self.connect();
@@ -785,6 +794,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.tab, ControlTab::Gadgets, "Gadgets");
                     ui.selectable_value(&mut self.tab, ControlTab::Settings, "Settings");
+                    ui.selectable_value(&mut self.tab, ControlTab::Recording, "Recording");
                 });
             });
         let content = egui::CentralPanel::default()
@@ -797,6 +807,7 @@ impl App {
                 egui::ScrollArea::vertical()
                     .id_salt("control-content")
                     .show(ui, |ui| match self.tab {
+                        ControlTab::Recording => self.recording_controls(ui),
                         ControlTab::Gadgets => self.gadget_cards(ui, snapshot),
                         ControlTab::Settings => self.settings_controls(ui, snapshot),
                     })
@@ -825,6 +836,80 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted.ceil()));
             }
         }
+    }
+
+    fn recording_controls(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Local recording");
+        ui.label("Save OutSim/OutGauge telemetry locally for later lap analysis.");
+        ui.label("Track is user-declared. Official timing, legality and driver identity are not verified.");
+        let open = self.runtime.as_ref().is_some_and(|r| r.recording_open());
+        ui.add_enabled_ui(!open && self.demo.is_none(), |ui| {
+            ui.checkbox(&mut self.config.insim_enabled, "Enable InSim HUD connection");
+            ui.label("Turn this off to record without any InSim connection. Applied when recording starts.");
+            ui.horizontal(|ui| { ui.label("Track code"); ui.text_edit_singleline(&mut self.recording_track); });
+            ui.horizontal(|ui| { ui.label("Output directory"); ui.text_edit_singleline(&mut self.recording_directory); });
+        });
+        if !open {
+            if ui
+                .add_enabled(self.demo.is_none(), egui::Button::new("Start recording"))
+                .clicked()
+            {
+                self.connect();
+                if let Some(runtime) = &mut self.runtime {
+                    self.message = runtime
+                        .start_recording(crate::recording::Options {
+                            directory: self.recording_directory.trim().into(),
+                            track: self.recording_track.trim().to_uppercase(),
+                            ..Default::default()
+                        })
+                        .err();
+                }
+            }
+        } else if ui.button("Stop recording").clicked()
+            && let Some(status) = self.runtime.as_mut().and_then(|r| r.stop_recording())
+        {
+            self.message = Some(
+                status
+                    .error
+                    .unwrap_or_else(|| format!("Saved {}", status.path.display())),
+            );
+        }
+        if let Some(status) = self.runtime.as_ref().and_then(|r| r.recording_status()) {
+            ui.label(if status.active {
+                "Recording"
+            } else {
+                "Recording stopped"
+            });
+            ui.label(format!(
+                "{:.1}s · OutSim {} · OutGauge {} · gaps {} · rejected {} · {} bytes",
+                status.elapsed_ms as f64 / 1000.0,
+                status.packets[0],
+                status.packets[1],
+                status.gaps,
+                status.rejected,
+                status.bytes
+            ));
+            for (i, label) in ["OutSim", "OutGauge"].iter().enumerate() {
+                ui.label(format!(
+                    "{label}: {}",
+                    status.last_received_ms[i].map_or_else(
+                        || "waiting for samples".into(),
+                        |last| format!(
+                            "last sample {} ms ago",
+                            status.elapsed_ms.saturating_sub(last)
+                        )
+                    )
+                ));
+            }
+            ui.label(status.path.display().to_string());
+            if let Some(error) = status.error {
+                ui.colored_label(Color32::YELLOW, error);
+            }
+        }
+        ui.label(
+            "Each file stops at 512 MiB. Existing recordings are never automatically deleted.",
+        );
+        ui.label("Configure OutSim and OutGauge with LFS closed before driving. Camera changes may create gaps.");
     }
 
     fn settings_controls(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {

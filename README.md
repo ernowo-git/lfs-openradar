@@ -20,6 +20,7 @@ primary platform; Linux/X11 support is experimental.
 
 ## Features
 
+- [Local OutSim/OutGauge recording, with an optional InSim connection](docs/local-recording.md)
 - Proximity radar
 - [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
 - [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)

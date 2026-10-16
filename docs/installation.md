@@ -23,17 +23,29 @@ a game, Gamescope, and exclusive fullscreen remain unverified.
 
 ## First configuration
 
-Copy [openradar.example.toml](../openradar.example.toml) to `openradar.local.toml`
-in your extracted application folder:
+On Windows, copy [openradar.example.toml](../openradar.example.toml) to
+`openradar.local.toml` in your extracted application folder:
 
 ```powershell
 Copy-Item openradar.example.toml openradar.local.toml
 ```
 
-On Linux, use `cp openradar.example.toml openradar.local.toml`.
 Launch from this folder, or set a Windows shortcut's **Start in** to it.
-The default config location is the **working directory**, which can differ
+The Windows default config location is the **working directory**, which can differ
 from the executable's folder.
+
+On Linux, the default is `~/.config/lfs-openradar/openradar.local.toml`, or
+`$XDG_CONFIG_HOME/lfs-openradar/openradar.local.toml` when `XDG_CONFIG_HOME` is an
+absolute path. To start with the example configuration at the usual location:
+
+```sh
+mkdir -p ~/.config/lfs-openradar
+cp openradar.example.toml ~/.config/lfs-openradar/openradar.local.toml
+```
+
+If you set `XDG_CONFIG_HOME`, use that directory in place of `~/.config` above.
+You can also launch without a config and click **Save settings** to create it.
+To keep an existing Linux configuration, copy that file instead of the example.
 
 You can store the config elsewhere by passing an existing file explicitly:
 

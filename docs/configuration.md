@@ -6,13 +6,19 @@ Fields omitted from older configurations use built-in defaults.
 
 ## Where the config lives
 
-Without `--config`, the app looks for `openradar.local.toml` in its **working
-directory**. This is the folder it was launched from; it is not automatically
-the executable's directory. In a terminal, the working directory is the current
-folder. A Windows shortcut's **Start in** field determines that folder.
+Without `--config`, Linux uses `~/.config/lfs-openradar/openradar.local.toml`,
+regardless of the launch folder. An absolute `XDG_CONFIG_HOME` overrides
+`~/.config`; empty or relative values are ignored. The app creates the default
+config directory automatically. If neither a usable `HOME` nor `XDG_CONFIG_HOME`
+is available, pass `--config` explicitly.
 
-For simple use, keep the executable and `openradar.local.toml` together, then
-launch from that folder. Set a shortcut's **Start in** to the same folder.
+Existing Linux configs in launch folders are not moved or loaded automatically.
+Copy the settings file you want to keep into the new default location before
+launching, or continue selecting the old file with `--config`.
+
+On Windows, the default remains `openradar.local.toml` in the **working
+directory**, the folder the app was launched from. Keep the executable and
+config together and set the shortcut's **Start in** to that folder.
 
 The config can also live in any other directory. Pass its path explicitly:
 
@@ -23,7 +29,7 @@ lfs-openradar.exe --config "C:\MySettings\openradar.local.toml"
 On Linux, for example:
 
 ```sh
-./lfs-openradar --config "$HOME/.config/openradar/openradar.local.toml"
+./lfs-openradar --config "$HOME/.config/lfs-openradar/openradar.local.toml"
 ```
 
 When running from the source repository:
@@ -41,12 +47,12 @@ Quote paths containing spaces.
 ## Loading and saving
 
 - If the default `openradar.local.toml` is missing, the app starts with built-in
-  defaults. **Save settings** creates that file in the working directory.
+  defaults. **Save settings** creates that file at the platform's default path.
 - If you pass `--config`, the file must already exist and contain valid TOML.
   A missing or invalid explicit config produces a startup error.
 - **Save settings** writes the current panel settings to the same path selected
-  at launch, including an explicit `--config` path. The folder must exist and be
-  writable.
+  at launch, including an explicit `--config` path. An explicit config's folder
+  must already exist and be writable.
 - **Apply / reconnect** restarts the live telemetry connection with the panel's
   current settings. Saving a file alone does not reconnect the worker.
 - When editing TOML externally, restart the app to load the changes. It does not

@@ -113,6 +113,8 @@ pub struct CarProfile {
 pub struct Config {
     pub overlay_backend: OverlayBackend,
     pub wayland: WaylandSettings,
+    /// Disable InSim for independent local telemetry recording.
+    pub insim_enabled: bool,
     pub insim_address: SocketAddr,
     pub insim_password: InSimPassword,
     /// Folder containing the user's LFS.exe; only the setup button edits LFS.
@@ -198,6 +200,7 @@ impl std::fmt::Debug for InSimPassword {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            insim_enabled: true,
             insim_address: "127.0.0.1:29999".parse().unwrap(),
             overlay_backend: OverlayBackend::default(),
             wayland: WaylandSettings::default(),
@@ -449,7 +452,9 @@ impl Config {
             }
         }
         self.overlay_toggle_key()?;
-        crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
+        if self.insim_enabled {
+            crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
+        }
         for settings in [
             &self.gap_ahead,
             &self.gap_behind,
@@ -473,14 +478,16 @@ impl Config {
                 return Err("Gap screen positions must be finite and scale 0.5..2".into());
             }
         }
-        if !self.insim_address.ip().is_loopback()
+        if (self.insim_enabled
+            && (!self.insim_address.ip().is_loopback() || self.insim_address.port() == 0))
             || !self.outsim_bind.ip().is_loopback()
-            || self.insim_address.port() == 0
             || self.outsim_bind.port() == 0
         {
             return Err("Use nonzero ports on loopback addresses for the local LFS client".into());
         }
-        if !(10..=8000).contains(&self.mci_interval_ms) || !self.mci_interval_ms.is_multiple_of(10)
+        if self.insim_enabled
+            && (!(10..=8000).contains(&self.mci_interval_ms)
+                || !self.mci_interval_ms.is_multiple_of(10))
         {
             return Err("MCI interval must be 10..8000 ms in steps of 10".into());
         }

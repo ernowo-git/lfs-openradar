@@ -1,3 +1,5 @@
+# Disable this for local OutSim/OutGauge recording without InSim HUD features.
+insim_enabled = true
 # Local LFS client. Enable its listener by typing /insim 29999 in LFS.
 overlay_backend = "auto" # or "window" / "wayland" to override; see docs/native-wayland.md
 insim_address = "127.0.0.1:29999"
