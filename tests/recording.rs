@@ -122,6 +122,15 @@ fn local_capture_survives_disabled_or_missing_insim_without_dashboard_gadgets() 
             });
             let status = runtime.stop_recording().unwrap();
             assert!(!status.active && status.error.is_none());
+            assert!(
+                status
+                    .path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("XFG_BL1_")
+            );
             assert!(status.gaps >= 2);
             let saved = events(&status.path);
             assert!(

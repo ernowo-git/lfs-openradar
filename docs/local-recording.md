@@ -27,7 +27,9 @@ Configuration also accepts `insim_enabled = false`. It defaults to true for exis
 
 ## Data and recovery
 
-Files begin as `<capture-id>.jsonl.partial`. The header is persisted immediately; the writer flushes and requests file synchronization at least every second when it can make progress. Abrupt power/process loss may lose data after the last successful checkpoint. Stop drains the queue, writes a footer and synchronizes the file, then atomically publishes `<capture-id>.jsonl` without replacing an existing file. A disk failure leaves an error and may leave a partial file.
+Files begin as `<TRACK>_<UTC-start-time>.jsonl.partial`. On stop, the detected car code is added, for example `XFG_BL1_2026-10-17_13-30-52.123456789Z.jsonl`. `Z` means UTC; fractional seconds distinguish captures started close together. The car comes from OutGauge (vehicle mods use their hexadecimal identifier), while the track remains user-declared. Files with no valid OutGauge car use `UNKNOWN-CAR`; captures containing different cars use `MULTI-CAR`.
+
+The header is persisted immediately; the writer flushes and requests file synchronization at least every second when it can make progress. Abrupt power/process loss may lose data after the last successful checkpoint. Stop drains the queue, writes a footer and synchronizes the file, then atomically publishes the finished `.jsonl` file without replacing an existing file. A disk failure leaves an error and may leave a partial file.
 
 Recover complete lines from an interrupted file:
 

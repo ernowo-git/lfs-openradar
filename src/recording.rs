@@ -1,5 +1,5 @@
 //! Local append-only capture. Socket threads only enqueue; one writer owns disk I/O.
-use crate::config::Config;
+use crate::{config::Config, lfs::outgauge};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -168,7 +168,11 @@ impl Recorder {
             .duration_since(UNIX_EPOCH)
             .map_err(|e| e.to_string())?;
         let id = format!("{}-{}", stamp.as_nanos(), std::process::id());
-        let path = options.directory.join(format!("{id}.jsonl.partial"));
+        let path = options.directory.join(format!(
+            "{}_{}.jsonl.partial",
+            options.track.to_ascii_uppercase(),
+            filename_timestamp(stamp),
+        ));
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -203,11 +207,18 @@ impl Recorder {
             started: Instant::now(),
         };
         let timeout_ms = config.stale_ms;
+        let outgauge_id = config.outgauge_id;
         let worker = thread::Builder::new()
             .name("lfs-recording-writer".into())
             .spawn(move || {
-                let result =
-                    write_capture(output, receiver, &status, options.max_bytes, timeout_ms);
+                let result = write_capture(
+                    output,
+                    receiver,
+                    &status,
+                    options.max_bytes,
+                    timeout_ms,
+                    outgauge_id,
+                );
                 let mut state = status.lock().unwrap();
                 if let Err(e) = result {
                     state
@@ -256,6 +267,33 @@ fn unix_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+/// UTC Gregorian date, using Howard Hinnant's civil_from_days algorithm:
+/// https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+fn filename_timestamp(stamp: Duration) -> String {
+    let seconds = stamp.as_secs();
+    let days = seconds / 86400 + 719468;
+    let era = days / 146097;
+    let day_of_era = days % 146097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_from_march = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_from_march + 2) / 5 + 1;
+    let month = if month_from_march < 10 {
+        month_from_march + 3
+    } else {
+        month_from_march - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}_{:02}-{:02}-{:02}.{:09}Z",
+        seconds / 3600 % 24,
+        seconds / 60 % 60,
+        seconds % 60,
+        stamp.subsec_nanos(),
+    )
+}
+
 fn checkpoint(output: &mut BufWriter<File>) -> std::io::Result<()> {
     output.flush()?;
     output.get_ref().sync_data()
@@ -282,7 +320,9 @@ fn write_capture(
     status: &Mutex<Status>,
     max_bytes: u64,
     timeout_ms: u64,
+    outgauge_id: i32,
 ) -> std::io::Result<()> {
+    let mut car: Option<String> = None;
     let mut last: [Option<(u32, u64)>; 2] = [None, None];
     let mut timed_out = [false; 2];
     let mut sequence = 0;
@@ -304,6 +344,14 @@ fn write_capture(
         match input {
             Some(Input::Finish) => break,
             Some(Input::Packet(stream, source, received, bytes)) => {
+                if stream == Stream::Outgauge
+                    && let Ok(sample) = outgauge::decode(&bytes, outgauge_id)
+                {
+                    car = Some(match car {
+                        Some(previous) if previous != sample.car => "MULTI-CAR".into(),
+                        _ => sample.car,
+                    });
+                }
                 let i = stream.index();
                 if let Some((previous, previous_received)) = last[i] {
                     let dt = source.wrapping_sub(previous);
@@ -409,6 +457,11 @@ fn write_capture(
     checkpoint(&mut output)?;
     drop(output);
     let final_path = path.with_extension("");
+    let final_path = final_path.with_file_name(format!(
+        "{}_{}",
+        car.as_deref().unwrap_or("UNKNOWN-CAR"),
+        final_path.file_name().unwrap().to_string_lossy(),
+    ));
     // Hard-link publication is atomic and refuses to overwrite an existing file.
     fs::hard_link(&path, &final_path)?;
     fs::remove_file(&path)?;
@@ -482,6 +535,106 @@ mod tests {
     use super::*;
 
     #[test]
+    fn filenames_use_utc_dates_including_leap_and_century_boundaries() {
+        for (seconds, expected) in [
+            (0, "1970-01-01_00-00-00"),
+            (951_782_400, "2000-02-29_00-00-00"),
+            (4_107_542_400, "2100-03-01_00-00-00"),
+            (1_792_243_852, "2026-10-17_13-30-52"),
+        ] {
+            assert_eq!(
+                filename_timestamp(Duration::new(seconds, 123_456_789)),
+                format!("{expected}.123456789Z"),
+            );
+        }
+    }
+
+    #[test]
+    fn readable_names_handle_unknown_mod_and_mixed_cars_without_overwriting() {
+        let directory = std::env::temp_dir().join(format!(
+            "openradar-names-{}-{}",
+            std::process::id(),
+            unix_ms(),
+        ));
+        for (cars, expected) in [
+            (vec![], "UNKNOWN-CAR"),
+            (vec![*b"XFG\0", *b"XFG\0"], "XFG"),
+            (vec![[0x12, 0xab, 0xcd, 0]], "CDAB12"),
+            (vec![*b"XFG\0", *b"XRG\0", *b"XRG\0"], "MULTI-CAR"),
+        ] {
+            let config = Config {
+                outgauge_id: 0,
+                ..Default::default()
+            };
+            let recorder = Recorder::start(
+                &config,
+                Options {
+                    directory: directory.clone(),
+                    track: "bl1".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let partial = recorder.status().path;
+            assert!(
+                partial
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("BL1_")
+            );
+            for car in cars {
+                let mut packet = [0; 92];
+                packet[4..8].copy_from_slice(&car);
+                recorder.sink.packet(Stream::Outgauge, 1, &packet);
+            }
+            let status = recorder.finish();
+            assert!(status.error.is_none(), "{:?}", status.error);
+            assert_eq!(
+                status.path.file_name().unwrap().to_str().unwrap(),
+                format!(
+                    "{expected}_{}",
+                    partial
+                        .with_extension("")
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                )
+            );
+            assert!(status.path.exists());
+            assert!(!partial.exists());
+        }
+        let recorder = Recorder::start(
+            &Config::default(),
+            Options {
+                directory: directory.clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let partial = recorder.status().path;
+        let destination = partial.with_file_name(format!(
+            "UNKNOWN-CAR_{}",
+            partial
+                .with_extension("")
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        ));
+        fs::write(&destination, "existing recording").unwrap();
+        assert!(recorder.finish().error.is_some());
+        assert_eq!(
+            fs::read_to_string(destination).unwrap(),
+            "existing recording"
+        );
+        assert!(partial.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn full_queue_fails_explicitly_without_waiting_for_disk() {
         let (sender, _receiver) = mpsc::sync_channel(1);
         let status = Arc::new(Mutex::new(Status::default()));
@@ -549,7 +702,7 @@ mod tests {
             path: path.clone(),
             ..Default::default()
         });
-        assert!(write_capture(output, receiver, &state, DEFAULT_MAX_BYTES, 250).is_err());
+        assert!(write_capture(output, receiver, &state, DEFAULT_MAX_BYTES, 250, 0).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"");
         fs::remove_file(path).unwrap();
     }
