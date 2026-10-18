@@ -239,6 +239,15 @@ unmodified key and follows the same background-hiding and Position mode rules
 as the checkbox. Individual gadget Enabled settings and telemetry recording
 are preserved when all overlays are hidden.
 
+With OpenRadar connected to LFS through InSim, type `/o hud` in LFS to toggle
+**Show overlays**, or `/o show` and `/o hide` to set it directly. These hidden
+local commands work with either overlay backend and are not posted to multiplayer chat. They
+preserve individual gadget Enabled settings, positions, and recording, and
+follow the same background-hiding rules as the checkbox. Commands are
+case-insensitive; each `/o hud` toggles once, while repeated `/o show` or
+`/o hide` keeps the requested state. InSim must be enabled;
+OutSim/OutGauge alone cannot receive commands.
+
 To change the shortcut, edit this top-level setting in your TOML configuration
 and restart OpenRadar:
 

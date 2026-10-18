@@ -6,6 +6,33 @@ use lfs_openradar::lfs::{
 use support::*;
 
 #[test]
+fn only_hidden_local_messages_decode_as_commands() {
+    let mut bytes = packet(11, 20);
+    bytes[7] = 6;
+    bytes[8..18].copy_from_slice(b"Name: show");
+    for user_type in 0..=3 {
+        bytes[6] = user_type;
+        let decoded = insim::decode(&bytes).unwrap();
+        if user_type == 3 {
+            assert!(matches!(decoded, Packet::LocalCommand(text) if text == "show"));
+        } else {
+            assert!(matches!(decoded, Packet::Other));
+        }
+    }
+    // /i is sent to the host's InSim, never interpreted as a local command.
+    bytes[1] = 12;
+    assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Other));
+    bytes[1] = 11;
+    bytes[7] = 11;
+    assert!(insim::decode(&bytes).is_err());
+    bytes[7] = 0;
+    bytes[19] = b'x';
+    assert!(insim::decode(&bytes).is_err());
+    assert!(insim::decode(&packet(11, 8)).is_err());
+    assert!(insim::decode(&packet(11, 140)).is_err());
+}
+
+#[test]
 fn tcp_fragments_and_coalesced_packets() {
     let mut framer = Framer::default();
     let first = mci(&[1, 2], true, true);

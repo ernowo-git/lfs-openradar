@@ -17,6 +17,81 @@ use std::{
 use support::*;
 
 #[test]
+fn local_overlay_commands_are_consumed_once_without_outsim() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let config = Config {
+        insim_address: listener.local_addr().unwrap(),
+        outsim_bind: udp.local_addr().unwrap(),
+        ..Default::default()
+    };
+    drop(udp);
+    let runtime = Runtime::start(config).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut tcp = loop {
+        match listener.accept() {
+            Ok((tcp, _)) => break tcp,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "no InSim connection");
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => panic!("{e}"),
+        }
+    };
+    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.read_exact(&mut [0; 44]).unwrap();
+    let mut version = packet(2, 20);
+    version[18] = 9;
+    tcp.write_all(&version).unwrap();
+    let cases: &[(u8, &[&str], bool, bool)] = &[
+        (3, &["show"], false, true),
+        (3, &["show", "show"], true, true),
+        (3, &[" HIDE "], true, false),
+        (3, &["hide", "hide"], false, false),
+        (1, &["show", "hud"], false, false),
+        (2, &["hide", "hud"], true, true),
+        (3, &["show extra", "hud extra", "unknown"], false, false),
+        (3, &["SHOW"], false, true),
+        (3, &["hud"], false, true),
+        (3, &[" HUD "], true, false),
+        (3, &["hud", "hud"], false, false),
+        (3, &["hud", "hud"], true, true),
+        (3, &["hud", "hud", "hud"], false, true),
+        (3, &["show", "hud"], false, false),
+        (3, &["hide", "hud"], true, true),
+        (3, &["hud", "show"], true, true),
+        (3, &["hud", "hide"], false, false),
+    ];
+    for &(user_type, commands, initial, expected) in cases {
+        for command in commands {
+            let mut message = packet(11, (9 + command.len()).next_multiple_of(4));
+            message[6] = user_type;
+            message[8..8 + command.len()].copy_from_slice(command.as_bytes());
+            tcp.write_all(&message).unwrap();
+        }
+        // The echoed keepalive proves the preceding message was processed.
+        tcp.write_all(&[1, 3, 0, 0]).unwrap();
+        let mut reply = [0; 4];
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            tcp.read_exact(&mut reply).unwrap();
+            if reply == [1, 3, 0, 0] {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no keepalive reply");
+        }
+        assert_eq!(
+            runtime.apply_overlay_visibility(initial),
+            expected,
+            "{commands:?}"
+        );
+        // A manual change after consumption must survive the next poll.
+        assert_eq!(runtime.apply_overlay_visibility(!expected), !expected);
+    }
+}
+
+#[test]
 fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
     mock_lfs(false, false, 9, false);
 }

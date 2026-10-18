@@ -64,6 +64,8 @@ pub enum Packet {
         protocol: u8,
     },
     Tiny(u8),
+    /// Hidden `/o` message typed on the local PC (MSO_O).
+    LocalCommand(String),
     LocalLights {
         request: u8,
         headlights: u8,
@@ -205,6 +207,22 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                 viewed: p[11],
                 track: text(&p[20..26]),
             })
+        }
+        11 => {
+            if !(12..=136).contains(&p.len()) || p.last() != Some(&0) {
+                return Err("invalid MSO message length or terminator".into());
+            }
+            let message = &p[8..];
+            let end = message.iter().position(|b| *b == 0).unwrap();
+            let start = usize::from(p[7]);
+            if start > end {
+                return Err("invalid MSO text offset".into());
+            }
+            if p[6] == 3 {
+                Packet::LocalCommand(text(&message[start..end]))
+            } else {
+                Packet::Other
+            }
         }
         17 => {
             exact(28)?;

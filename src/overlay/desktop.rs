@@ -300,6 +300,11 @@ impl App {
         self.overlay_enabled = !self.overlay_enabled;
         log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
     }
+    fn process_lfs_commands(&mut self) {
+        if let Some(runtime) = &self.runtime {
+            self.overlay_enabled = runtime.apply_overlay_visibility(self.overlay_enabled);
+        }
+    }
     fn process_hotkey(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "linux")]
         if let Some(error) = self.hotkey.as_ref().and_then(|hotkey| hotkey.error()) {
@@ -999,6 +1004,7 @@ impl App {
         {
             log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
         }
+        ui.label("In LFS: /o hud to toggle, /o show or /o hide (requires InSim).");
         if let Ok(Some(key)) = self.config.overlay_toggle_key() {
             let scope = if self.hotkey.is_some() {
                 "also while driving"
@@ -1569,6 +1575,7 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.process_lfs_commands();
         self.process_hotkey(ctx);
         self.receive_overlay_feedback();
         let now = self.started.elapsed().as_millis() as u64;

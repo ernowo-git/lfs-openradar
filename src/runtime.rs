@@ -50,6 +50,12 @@ impl SnapshotReader {
     }
 }
 
+#[derive(Clone, Copy)]
+enum VisibilityCommand {
+    Set(bool),
+    Toggle,
+}
+
 pub struct Runtime {
     latest: Arc<Mutex<Snapshot>>,
     stop: Arc<AtomicBool>,
@@ -58,6 +64,7 @@ pub struct Runtime {
     recording_sink: Arc<Mutex<Option<crate::recording::Sink>>>,
     recorder: Option<crate::recording::Recorder>,
     last_recording: Option<crate::recording::Status>,
+    overlay_visibility: Arc<Mutex<Option<VisibilityCommand>>>,
 }
 
 impl Runtime {
@@ -105,6 +112,8 @@ impl Runtime {
         let saved_config = config.clone();
         let output = latest.clone();
         let quit = stop.clone();
+        let overlay_visibility = Arc::new(Mutex::new(None));
+        let worker_visibility = overlay_visibility.clone();
         let worker = thread::Builder::new()
             .name("lfs-telemetry".into())
             .spawn(move || {
@@ -117,6 +126,7 @@ impl Runtime {
                     store,
                     lap_log,
                     worker_sink,
+                    worker_visibility,
                 );
             })
             .map_err(|e| e.to_string())?;
@@ -128,6 +138,7 @@ impl Runtime {
             recording_sink,
             recorder: None,
             last_recording: None,
+            overlay_visibility,
         })
     }
     pub fn start_recording(&mut self, options: crate::recording::Options) -> Result<(), String> {
@@ -171,6 +182,15 @@ impl Runtime {
     }
     pub fn snapshot_reader(&self) -> SnapshotReader {
         SnapshotReader(self.latest.clone())
+    }
+    /// Apply pending `/o show`, `/o hide`, and `/o hud` requests once to the
+    /// panel's current visibility. Multiple requests retain their combined effect.
+    pub fn apply_overlay_visibility(&self, visible: bool) -> bool {
+        match self.overlay_visibility.lock().unwrap().take() {
+            Some(VisibilityCommand::Set(value)) => value,
+            Some(VisibilityCommand::Toggle) => !visible,
+            None => visible,
+        }
     }
 }
 
@@ -245,6 +265,7 @@ fn run(
     store: Option<crate::config::SharedConfigStore>,
     lap_log: crate::lap_log::SharedLapLog,
     recording: Arc<Mutex<Option<crate::recording::Sink>>>,
+    overlay_visibility: Arc<Mutex<Option<VisibilityCommand>>>,
 ) {
     let start = Instant::now();
     let mut engine = Engine::new(config.follow_viewed_car);
@@ -415,6 +436,28 @@ fn run(
                                                 );
                                             }
                                             pending_light_request = None;
+                                        }
+                                    }
+                                    Ok(Packet::LocalCommand(command)) if protocol_ready => {
+                                        use VisibilityCommand::{Set, Toggle};
+                                        let command = command.trim();
+                                        let request = if command.eq_ignore_ascii_case("show") {
+                                            Some(Set(true))
+                                        } else if command.eq_ignore_ascii_case("hide") {
+                                            Some(Set(false))
+                                        } else if command.eq_ignore_ascii_case("hud") {
+                                            Some(Toggle)
+                                        } else {
+                                            None
+                                        };
+                                        if let Some(request) = request {
+                                            let mut pending = overlay_visibility.lock().unwrap();
+                                            // Collapse the ordered commands without losing toggle parity.
+                                            *pending = match (request, *pending) {
+                                                (Toggle, Some(Set(value))) => Some(Set(!value)),
+                                                (Toggle, Some(Toggle)) => None,
+                                                _ => Some(request),
+                                            };
                                         }
                                     }
                                     Ok(Packet::Tiny(0)) => {
