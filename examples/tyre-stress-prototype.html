@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRadar · tyre stress prototype</title>
+<style>
+  :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #11151c; color: #e2e8f0; }
+  body { max-width: 1180px; margin: auto; padding: 28px; }
+  h1 { font-size: 30px; margin-bottom: 6px; } h2 { font-size: 19px; margin: 0 0 12px; }
+  p { margin: 8px 0; } .muted, small { color: #a5b1c4; } .badge { color: #8dc6ff; letter-spacing: .1em; font-size: 12px; }
+  section { margin: 20px 0; padding: 20px; border: 1px solid #344052; border-radius: 10px; background: #19202b; }
+  button, select, input[type=number] { font: inherit; color: inherit; background: #242f40; border: 1px solid #52627b; border-radius: 5px; padding: 7px 10px; }
+  button { cursor: pointer; } button:hover, button[aria-selected=true] { background: #354d6f; } button:disabled { opacity: .4; cursor: default; }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #8dc6ff; outline-offset: 3px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+  input[type=number] { width: 75px; } input[type=range] { flex: 1; min-width: 160px; accent-color: #8dc6ff; }
+  .table-wrap { overflow-x: auto; } table { border-collapse: collapse; width: 100%; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 10px; border-bottom: 1px solid #344052; } th:first-child, td:first-child { text-align: left; }
+  #chart { width: 100%; height: auto; background: #11151c; border-radius: 6px; touch-action: manipulation; }
+  .wheel0 { color: #8dc6ff; } .wheel1 { color: #73d8bf; } .wheel2 { color: #e8b275; } .wheel3 { color: #c6a7f0; }
+  .error { color: #ffb4b4; } .notice { border-left: 3px solid #8dc6ff; padding-left: 12px; }
+  code { color: #c6d8f2; } a { color: #8dc6ff; } details { margin-top: 15px; } summary { cursor: pointer; }
+  #walkthrough { min-height: 90px; } .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  @media(max-width: 600px) { body { padding: 12px; } section { padding: 12px; } h1 { font-size: 25px; } }
+</style>
+<header>
+  <div class="badge">OPENRADAR / EXPERIMENTAL</div>
+  <h1>Tyre stress, before tyre wear</h1>
+  <p>Can a load, motion and slip index distinguish gentle driving, sliding, burnouts and unloaded wheels?</p>
+  <p class="notice">This is an uncalibrated stress index. It does not measure rubber loss, remaining tread, grip loss or tyre life.</p>
+  <p id="capture-info" class="muted"></p>
+</header>
+<section>
+  <h2>Model assumptions</h2>
+  <p><code>rate = load_kN × max(car_speed_m/s, |wheel_rad/s| × nominal_radius_m) × SlipFraction / 255</code></p>
+  <p class="muted">Integrate only while both ends of a sample interval have ground contact and positive load. Temperature is displayed, with no invented wear multiplier.</p>
+  <div class="row" id="radii">
+    <span>Nominal radius:</span>
+    <label>W0 <input id="radius0" type="number" min="0.05" max="2" step="0.005" value="0.300"> m</label>
+    <label>W1 <input id="radius1" type="number" min="0.05" max="2" step="0.005" value="0.300"> m</label>
+    <label>W2 <input id="radius2" type="number" min="0.05" max="2" step="0.005" value="0.300"> m</label>
+    <label>W3 <input id="radius3" type="number" min="0.05" max="2" step="0.005" value="0.300"> m</label>
+    <button id="recalculate">Recalculate</button>
+  </div>
+  <p class="muted">0.300 m is an illustrative default, not a measured radius. Set all four for the car being compared. W0–W3 are packet indices; corner mapping needs live validation.</p>
+  <p id="model-status" role="status" class="muted"></p>
+</section>
+<section>
+  <div class="row">
+    <h2 style="margin:0">Inspect a run</h2>
+    <label>Data <select id="source"><option value="recording">Recorded telemetry</option><option value="experiment">Synthetic experiment</option></select></label>
+    <label>Segment <select id="segment"></select></label>
+  </div>
+  <p id="segment-info" class="muted"></p>
+  <svg id="chart" viewBox="0 0 1080 260" role="img" aria-label="Accumulated stress over segment time for four wheel indices"></svg>
+  <div class="row">
+    <button id="play">Play</button><button id="start">Start</button>
+    <input id="cursor" aria-label="Sample in selected segment" type="range" min="0" max="0" value="0">
+    <button id="end">End</button><span id="clock"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Wheel</th><th>Load kN</th><th>Contact</th><th>Slip fraction</th><th>Air °C</th><th>Rate units/s</th><th>Stress units</th></tr></thead>
+      <tbody id="wheels"></tbody>
+    </table>
+  </div>
+  <details><summary>More telemetry at this sample</summary><div id="raw" class="table-wrap"></div></details>
+  <details><summary>Read this before comparing runs</summary>
+    <p>SlipFraction is relative to the slip producing peak force. Values 0–254 approach that slip; 255 means beyond it and cannot measure how far beyond. This index deliberately inherits that saturation.</p>
+    <p>The motion term uses the car reference-point speed and a nominal wheel radius. It is a proxy, not per-wheel ground speed or measured slip power. Displayed force fields are reserved for investigating a later energy model.</p>
+    <p>Each segment starts at zero. Recorded OutSim gaps, identity changes, duplicate/backwards clocks, and source or receipt intervals over 250 ms start another segment. No stress is inferred across those boundaries. Missing data can therefore undercount stress.</p>
+    <p>Make one recording per known tyre stint. This OutSim/OutGauge report cannot detect fresh tyres, a same-car driver change, or every teleport. It cannot reconstruct wear from before recording started. A completed file does not certify a complete stint.</p>
+    <p>Compare the same car, compound, track, setup and radius assumptions first. Internal tyre air temperature is neither ambient nor tread surface temperature. Unknown temperature effects and local flat spots remain unmodeled.</p>
+    <p><a href="https://www.lfs.net/programmer/raf">LFS slip-fraction definition</a> · <a href="https://www.lfs.net/programmer/carinfo">LFS car-info export</a></p>
+  </details>
+</section>
+<section>
+  <h2>Try the awkward cases</h2>
+  <p class="muted">These buttons append one synthetic second for all four wheel indices. They never alter the recording. Starting a walkthrough resets the experiment.</p>
+  <div class="row" id="free-play"></div>
+  <div class="tabs" id="tabs" role="tablist" aria-label="Guided experiments"></div>
+  <div id="walkthrough" role="tabpanel"></div>
+  <p id="action-status" role="status" class="muted"></p>
+</section>
+<footer class="muted">Throwaway prototype. Check behavior against F9 observations and separate validation runs before fitting a wear model. No data is uploaded.</footer>
+<script id="capture-data" type="application/json">__CAPTURE_DATA__</script>
+<script id="stress-model">
+// Pure prototype logic. No DOM or physical wear coefficients.
+const DEFAULT_RADII = [0.3, 0.3, 0.3, 0.3];
+const MAX_GAP_MS = 250;
+function wheelRates(frame, radii) {
+  return frame.wheels.map((w, i) => {
+    const grounded = w[4] !== 0 && w[0] > 0;
+    const motion = Math.max(frame.speed_mps, Math.abs(w[1]) * radii[i]);
+    return {grounded, rate: grounded ? w[0] / 1000 * motion * w[3] / 255 : 0};
+  });
+}
+function analyse(frames, radii = DEFAULT_RADII) {
+  const segments = [];
+  let previous = null, previousRates = null, segment = null;
+  for (const frame of frames) {
+    const dt = previous ? (frame.time_ms - previous.time_ms) >>> 0 : 0;
+    const receiptDt = previous ? (frame.received_us - previous.received_us) / 1000 : 0;
+    let reason = frame.boundary || (previous ? '' : 'start of available samples');
+    if (previous && !reason) {
+      if (dt === 0) reason = 'duplicate source clock';
+      else if (dt > 0x7fffffff) reason = 'source clock moved backwards';
+      else if (dt > MAX_GAP_MS || receiptDt > MAX_GAP_MS || receiptDt < 0) reason = 'sample gap or receipt clock discontinuity';
+    }
+    const rates = wheelRates(frame, radii);
+    if (reason) {
+      segment = {reason, points: []};
+      segments.push(segment);
+    }
+    const last = segment.points.at(-1);
+    const totals = last ? last.totals.map((total, i) => total + (
+      previousRates[i].grounded && rates[i].grounded
+        ? (previousRates[i].rate + rates[i].rate) / 2 * dt / 1000 : 0
+    )) : [0, 0, 0, 0];
+    segment.points.push({frame, rates, totals, elapsed: last ? last.elapsed + dt / 1000 : 0});
+    previous = frame;
+    previousRates = rates;
+  }
+  return segments;
+}
+function syntheticFrame(time, kind = 'roll') {
+  const speed = kind === 'burnout' ? 0 : 30;
+  return {time_ms: time, received_us: time * 1000, speed_mps: speed,
+    wheels: [0, 1, 2, 3].map(i => [kind === 'load' && i === 0 ? 8000 : 4000,
+      kind === 'lock' ? 0 : 100, 80, kind === 'roll' ? 0 : 255,
+      kind === 'air' ? 0 : 1, kind === 'lock' ? -1 : 0.2, 0.1, 1000, 1000])};
+}
+function modelSelfCheck() {
+  const pair = kind => [syntheticFrame(0, kind), syntheticFrame(100, kind)];
+  const total = (frames, radii) => analyse(frames, radii).at(-1).points.at(-1).totals;
+  const check = (condition, label) => { if (!condition) throw Error('model self-check failed: ' + label); };
+  check(total(pair('roll'))[0] === 0, 'zero slip');
+  check(total(pair('air'))[0] === 0, 'airborne');
+  check(Math.abs(total(pair('slide'))[0] - 12) < 1e-9, 'known integral');
+  check(total(pair('load'))[0] === total(pair('slide'))[0] * 2, 'double load');
+  check(total(pair('burnout'))[0] > 0, 'stationary burnout');
+  check(total(pair('lock'))[0] > 0, 'locked sliding tyre');
+  check(total(pair('burnout'), [0.6, 0.3, 0.3, 0.3])[0] === 24, 'radius sensitivity');
+  const cold = pair('slide'), hot = pair('slide');
+  hot.forEach(f => f.wheels.forEach(w => { w[2] = 200; }));
+  check(total(cold)[0] === total(hot)[0], 'temperature has no invented coefficient');
+  const negative = pair('slide'); negative.forEach(f => { f.wheels[0][0] = -100; });
+  check(total(negative)[0] === 0, 'negative load');
+  const takeoff = pair('slide'); takeoff[1].wheels.forEach(w => { w[4] = 0; });
+  check(total(takeoff)[0] === 0, 'contact transition does not infer sliding');
+  for (const frames of [
+    [syntheticFrame(0, 'slide'), syntheticFrame(1000, 'slide')],
+    [syntheticFrame(100, 'slide'), syntheticFrame(100, 'slide')],
+    [syntheticFrame(100, 'slide'), syntheticFrame(0, 'slide')],
+    [syntheticFrame(0, 'slide'), {...syntheticFrame(100, 'slide'), boundary: 'tyre stint changed'}],
+    [syntheticFrame(0, 'slide'), {...syntheticFrame(100, 'slide'), received_us: 1000000}],
+  ]) check(analyse(frames).length === 2 && total(frames)[0] === 0, 'discontinuity does not bridge');
+  const a = syntheticFrame(0xfffffff0, 'slide'), b = syntheticFrame(84, 'slide');
+  a.received_us = 0; b.received_us = 100000;
+  check(analyse([a,b]).length === 1 && Math.abs(total([a,b])[0] - 12) < 1e-9, 'source clock rollover');
+  return 'Model self-checks passed. Numerical checks do not validate LFS wear accuracy.';
+}
+</script>
+<script id="stress-ui">
+const capture = JSON.parse(document.getElementById('capture-data').textContent);
+const $ = id => document.getElementById(id);
+const colors = ['#8dc6ff', '#73d8bf', '#e8b275', '#c6a7f0'];
+let experiment = [], segments = [], radii = DEFAULT_RADII.slice(), playing = false, animation = 0;
+const fmt = (value, places = 2) => value.toLocaleString(undefined, {maximumFractionDigits: places});
+const recordingAvailable = capture.frames.length > 0;
+$('source').options[0].disabled = !recordingAvailable;
+$('source').value = recordingAvailable ? 'recording' : 'experiment';
+$('capture-info').textContent = `${capture.source} · declared track ${capture.track} · ${capture.frames.length.toLocaleString()} OutSim samples · cars: ${capture.cars.join(', ') || 'unknown'} · ${capture.complete ? 'cleanly finalized file' : 'synthetic or incomplete capture'} · context ${capture.context_verified ? 'verified by recorder' : 'not verified'}`;
+try { $('model-status').textContent = modelSelfCheck(); }
+catch (error) { $('model-status').textContent = error.message; $('model-status').className = 'error'; throw error; }
+function stop() { playing = false; cancelAnimationFrame(animation); $('play').textContent = 'Play'; }
+function selectedSegment() { return segments[Number($('segment').value) || 0]; }
+function recalculate(atEnd = false) {
+  stop();
+  const proposed = [0,1,2,3].map(i => Number($('radius' + i).value));
+  if (proposed.some(r => !Number.isFinite(r) || r < 0.05 || r > 2)) {
+    $('model-status').textContent = 'Enter four nominal radii from 0.05 to 2 metres.';
+    $('model-status').className = 'error';
+    segments = []; $('segment').replaceChildren(); changeSegment(); return;
+  }
+  radii = proposed;
+  $('model-status').className = 'muted';
+  $('model-status').textContent = `Active nominal radii: ${radii.map(r => r.toFixed(3)).join(', ')} m. No temperature multiplier.`;
+  segments = analyse($('source').value === 'recording' ? capture.frames : experiment, radii);
+  $('segment').replaceChildren(...segments.map((segment, i) => {
+    const option = document.createElement('option'); option.value = i;
+    option.textContent = `${i + 1} · ${fmt(segment.points.at(-1).elapsed)} s`; return option;
+  }));
+  if (atEnd) $('segment').value = Math.max(0, segments.length - 1);
+  else if ($('source').value === 'recording' && segments.length) {
+    $('segment').value = segments.reduce((best, segment, i) =>
+      segment.points.at(-1).elapsed > segments[best].points.at(-1).elapsed ? i : best, 0);
+  }
+  changeSegment(atEnd || $('source').value === 'recording');
+}
+function changeSegment(atEnd = false) {
+  stop();
+  const segment = selectedSegment();
+  $('cursor').max = Math.max(0, (segment?.points.length || 1) - 1);
+  $('cursor').value = atEnd ? $('cursor').max : 0;
+  $('segment-info').textContent = segment
+    ? `Segment ${Number($('segment').value) + 1}/${segments.length} · ${segment.reason} · ${segment.points.length.toLocaleString()} samples. Totals start at zero for this segment.`
+    : 'No experiment samples yet. Use a button below to begin.';
+  renderChart(); renderSample();
+}
+function renderChart() {
+  const points = selectedSegment()?.points || [];
+  const end = points.at(-1), duration = end?.elapsed || 1;
+  const maximum = Math.max(1, ...(end?.totals || [0]));
+  let svg = `<g fill="#a5b1c4" font-family="system-ui" font-size="13"><text x="65" y="23">Accumulated stress units</text><text x="65" y="245">0 s</text><text x="920" y="245">${fmt(end?.elapsed || 0)} s</text><text x="8" y="47">${fmt(maximum, 0)}</text><text x="35" y="218">0</text></g><path d="M65 35V215H1055" stroke="#344052" fill="none"/>`;
+  if (points.length) for (let wheel = 0; wheel < 4; wheel++) {
+    const stride = Math.max(1, Math.ceil(points.length / 1200));
+    const sampled = points.filter((_, i) => i % stride === 0 || i === points.length - 1);
+    const d = sampled.map((p, i) => `${i ? 'L' : 'M'}${65 + p.elapsed / duration * 990},${215 - p.totals[wheel] / maximum * 175}`).join(' ');
+    svg += `<path d="${d}" fill="none" stroke="${colors[wheel]}" stroke-width="2"/>`;
+  }
+  $('chart').innerHTML = svg + '<path id="chart-cursor" stroke="#a5b1c4" stroke-dasharray="4 4"/>';
+}
+function renderSample() {
+  const segment = selectedSegment(), point = segment?.points[Number($('cursor').value)];
+  for (const id of ['play','start','end','cursor']) $(id).disabled = !point;
+  if (!point) { $('wheels').replaceChildren(); $('raw').replaceChildren(); $('clock').textContent = ''; return; }
+  const frame = point.frame;
+  $('clock').textContent = `${fmt(point.elapsed)} s · car ${fmt(frame.speed_mps * 3.6)} km/h`;
+  $('wheels').innerHTML = frame.wheels.map((w, i) => `<tr><th class="wheel${i}">W${i}</th><td>${fmt(w[0]/1000)}</td><td>${w[4] ? 'yes' : 'no'}</td><td>${w[3]}/255${w[3] === 255 ? ' · beyond peak' : ''}</td><td>${w[2]}</td><td>${fmt(point.rates[i].rate)}</td><td>${fmt(point.totals[i])}</td></tr>`).join('');
+  $('raw').innerHTML = '<table><thead><tr><th>Wheel</th><th>Rotation rad/s</th><th>Slip ratio</th><th>tan(slip angle)</th><th>Force right N</th><th>Force forward N</th></tr></thead><tbody>' + frame.wheels.map((w,i) => `<tr><th>W${i}</th>${[w[1],w[5],w[6],w[7],w[8]].map(v => `<td>${fmt(v,4)}</td>`).join('')}</tr>`).join('') + '</tbody></table>';
+  const x = 65 + point.elapsed / (segment.points.at(-1).elapsed || 1) * 990;
+  $('chart-cursor').setAttribute('d', `M${x} 35V215`);
+}
+$('source').onchange = () => recalculate();
+$('segment').onchange = () => changeSegment(true);
+$('recalculate').onclick = () => recalculate();
+$('cursor').oninput = () => { stop(); renderSample(); };
+$('start').onclick = () => { stop(); $('cursor').value = 0; renderSample(); };
+$('end').onclick = () => { stop(); $('cursor').value = $('cursor').max; renderSample(); };
+$('chart').onclick = event => {
+  const points = selectedSegment()?.points; if (!points?.length) return;
+  const box = $('chart').getBoundingClientRect();
+  const time = Math.max(0, Math.min(1, ((event.clientX - box.left) / box.width * 1080 - 65) / 990)) * points.at(-1).elapsed;
+  let lo = 0, hi = points.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (points[mid].elapsed < time) lo = mid + 1; else hi = mid; }
+  stop(); $('cursor').value = lo; renderSample();
+};
+$('play').onclick = () => {
+  if (playing) return stop();
+  if (Number($('cursor').value) >= Number($('cursor').max)) $('cursor').value = 0;
+  playing = true; $('play').textContent = 'Pause';
+  let lastPaint = 0;
+  const tick = now => {
+    if (!playing) return;
+    if (now - lastPaint >= 50) {
+      // Scrub long runs in about 30 seconds; this is not physics-time playback.
+      $('cursor').value = Math.min(Number($('cursor').max), Number($('cursor').value) + Math.max(1, Math.ceil(Number($('cursor').max)/600)));
+      renderSample(); lastPaint = now;
+    }
+    if (Number($('cursor').value) >= Number($('cursor').max)) stop();
+    else animation = requestAnimationFrame(tick);
+  };
+  animation = requestAnimationFrame(tick);
+};
+const actions = {roll:'Roll without slip', slide:'Slide beyond peak', load:'Double W0 load', burnout:'Stationary burnout', lock:'Locked-wheel slide', air:'Airborne', gap:'Telemetry gap', reset:'Reset experiment'};
+function act(kind) {
+  $('source').value = 'experiment';
+  if (kind === 'reset') experiment = [];
+  else if (kind === 'gap') {
+    const time = (experiment.at(-1)?.time_ms || 0) + 1000;
+    experiment.push({...syntheticFrame(time, 'slide'), boundary:'synthetic one-second telemetry gap'});
+  } else {
+    const time = experiment.at(-1)?.time_ms || 0;
+    if (!experiment.length) experiment.push(syntheticFrame(time, kind));
+    for (let i = 1; i <= 100; i++) experiment.push(syntheticFrame(time + i * 10, kind));
+  }
+  $('action-status').textContent = `${actions[kind]}. Synthetic experiment only; the original recording is unchanged.`;
+  recalculate(true);
+}
+for (const [kind, label] of Object.entries(actions)) {
+  const button = document.createElement('button'); button.textContent = label; button.onclick = () => act(kind); $('free-play').append(button);
+}
+const scenarios = [
+  {name:'Motion', text:'Pure rolling adds no slip exposure. A stationary burnout and a locked-wheel slide both add stress despite one of their speed readings being zero.', steps:['roll','burnout','lock']},
+  {name:'Load and contact', text:'Compare W0 with the other wheels after the loaded slide. W0 gains twice the rate. Airborne samples add no stress.', steps:['slide','load','air']},
+  {name:'Missing data', text:'A gap starts a new segment at zero. It must not fabricate wear during the missing second. Return to the previous segment to inspect its total.', steps:['slide','gap','slide']},
+];
+function walkthrough(index) {
+  act('reset');
+  [...$('tabs').children].forEach((button, i) => button.setAttribute('aria-selected', i === index));
+  const scenario = scenarios[index];
+  $('walkthrough').replaceChildren();
+  const explanation = document.createElement('p'); explanation.textContent = scenario.text; $('walkthrough').append(explanation);
+  const steps = document.createElement('div'); steps.className = 'row';
+  scenario.steps.forEach((kind, i) => {
+    const button = document.createElement('button'); button.textContent = `${i+1}. ${actions[kind]}`; button.disabled = i > 0;
+    button.onclick = () => { act(kind); button.disabled = true; if (steps.children[i+1]) steps.children[i+1].disabled = false; };
+    steps.append(button);
+  });
+  $('walkthrough').append(steps);
+}
+scenarios.forEach((scenario, i) => {
+  const button = document.createElement('button'); button.textContent = scenario.name; button.setAttribute('role','tab'); button.setAttribute('aria-selected','false'); button.onclick = () => walkthrough(i); $('tabs').append(button);
+});
+if (recordingAvailable) recalculate();
+else walkthrough(0);
+</script>
+</html>

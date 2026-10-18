@@ -43,6 +43,10 @@ Version 1 is JSON Lines: `header`, `packet`, `gap`, `footer`. Packets preserve t
 
 The detailed decoders expose optional motion, controls, drivetrain, distance, wheel and steering-torque channels in protocol units. Missing blocks remain absent. Tyre temperature is air temperature; wheel indices remain unlabeled pending live corner mapping. No tread wear or surface-temperature channel is invented. Raw packets preserve all received bytes for future decoding.
 
+An experimental [tyre stress report](tyre-stress-prototype.md) can replay extended
+wheel recordings as a standalone HTML file. Its accumulated stress index is
+uncalibrated and does not represent remaining tyre wear.
+
 `gap` events record timeout/rejection, duplicate/backwards source clocks and long discontinuities. The initial timeout threshold uses `stale_ms`; short dropped intervals are not guaranteed to be detected, and UDP supplies no packet sequence number to count exact losses. Header UTC is client-reported. A footer's `complete` means clean capture finalization, not a complete lap, gap-free trace or official result.
 
 Before map/UI work, capture real laps with InSim disabled, verify both streams and decoded fields, inspect camera gaps and compare with the actual car. Software fixtures do not verify LFS/Wine driving behavior.
