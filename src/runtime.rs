@@ -6,9 +6,11 @@ use crate::{
         insim::{self, Framer, Packet},
         outgauge, outsim,
     },
+    overlay::Gadget,
     radar::{Engine, RadarFrame},
 };
 use std::{
+    collections::BTreeSet,
     io::{Read, Write},
     net::{TcpStream, UdpSocket},
     sync::{
@@ -30,6 +32,7 @@ pub struct Snapshot {
     pub fuel: crate::fuel::FuelFrame,
     pub lap_records: crate::lap_records::LapRecordsFrame,
     pub lap_log: crate::lap_log::LapLogFrame,
+    pub relative: crate::relative::RelativeFrame,
     pub lap_records_error: Option<String>,
     pub outgauge_error: Option<String>,
     pub outgauge_forward_error: Option<String>,
@@ -50,10 +53,60 @@ impl SnapshotReader {
     }
 }
 
+#[derive(Clone, Copy)]
+enum VisibilityCommand {
+    Set(bool),
+    Toggle,
+}
+
+#[derive(Default)]
+struct PendingVisibility {
+    master: Option<VisibilityCommand>,
+    gadget_toggles: BTreeSet<Gadget>,
+}
+
+impl PendingVisibility {
+    fn receive(&mut self, command: &str) {
+        use VisibilityCommand::{Set, Toggle};
+        let mut words = command.split_ascii_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some(command), None, None) => {
+                let request = if command.eq_ignore_ascii_case("show") {
+                    Set(true)
+                } else if command.eq_ignore_ascii_case("hide") {
+                    Set(false)
+                } else if command.eq_ignore_ascii_case("hud") {
+                    Toggle
+                } else {
+                    return;
+                };
+                self.master = match (request, self.master) {
+                    (Toggle, Some(Set(value))) => Some(Set(!value)),
+                    (Toggle, Some(Toggle)) => None,
+                    _ => Some(request),
+                };
+            }
+            (Some(command), Some(name), None) if command.eq_ignore_ascii_case("hud") => {
+                if let Some(gadget) = Gadget::from_command_name(name)
+                    && !self.gadget_toggles.remove(&gadget)
+                {
+                    self.gadget_toggles.insert(gadget);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub struct Runtime {
     latest: Arc<Mutex<Snapshot>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    config: Config,
+    recording_sink: Arc<Mutex<Option<crate::recording::Sink>>>,
+    recorder: Option<crate::recording::Recorder>,
+    last_recording: Option<crate::recording::Status>,
+    overlay_visibility: Arc<Mutex<PendingVisibility>>,
 }
 
 impl Runtime {
@@ -82,7 +135,11 @@ impl Runtime {
         lap_log: crate::lap_log::SharedLapLog,
     ) -> Result<Self, String> {
         config.validate()?;
-        let initial = insim::init(config.mci_interval_ms, &password)?;
+        let initial = if config.insim_enabled {
+            Some(insim::init(config.mci_interval_ms, &password)?)
+        } else {
+            None
+        };
         let udp = UdpSocket::bind(config.outsim_bind).map_err(|e| {
             format!(
                 "Cannot bind OutSim {}: {e}. Check other telemetry apps.",
@@ -92,25 +149,96 @@ impl Runtime {
         udp.set_nonblocking(true).map_err(|e| e.to_string())?;
         let latest = Arc::new(Mutex::new(Snapshot::default()));
         let stop = Arc::new(AtomicBool::new(false));
+        let recording_sink = Arc::new(Mutex::new(None));
+        let worker_sink = recording_sink.clone();
+        let saved_config = config.clone();
         let output = latest.clone();
         let quit = stop.clone();
+        let overlay_visibility = Arc::new(Mutex::new(PendingVisibility::default()));
+        let worker_visibility = overlay_visibility.clone();
         let worker = thread::Builder::new()
             .name("lfs-telemetry".into())
             .spawn(move || {
-                run(config, initial, udp, output, quit, store, lap_log);
+                run(
+                    config,
+                    initial,
+                    udp,
+                    output,
+                    quit,
+                    store,
+                    lap_log,
+                    worker_sink,
+                    worker_visibility,
+                );
             })
             .map_err(|e| e.to_string())?;
         Ok(Self {
             latest,
             stop,
             worker: Some(worker),
+            config: saved_config,
+            recording_sink,
+            recorder: None,
+            last_recording: None,
+            overlay_visibility,
         })
+    }
+    pub fn start_recording(&mut self, options: crate::recording::Options) -> Result<(), String> {
+        if self.recorder.is_some() {
+            return Err("a recording is already open; stop it first".into());
+        }
+        if self.config.outsim_bind == self.config.outgauge_bind
+            && matches!(
+                outsim::packet_size(self.config.outsim_options, self.config.expected_outsim_id())?,
+                92 | 96
+            )
+        {
+            return Err(
+                "recording needs separate UDP ports for ambiguous OutSim/OutGauge packet sizes"
+                    .into(),
+            );
+        }
+        let recorder = crate::recording::Recorder::start(&self.config, options)?;
+        *self.recording_sink.lock().unwrap() = Some(recorder.sink.clone());
+        self.recorder = Some(recorder);
+        Ok(())
+    }
+    pub fn stop_recording(&mut self) -> Option<crate::recording::Status> {
+        self.recording_sink.lock().unwrap().take();
+        if let Some(recorder) = self.recorder.take() {
+            self.last_recording = Some(recorder.finish());
+        }
+        self.last_recording.clone()
+    }
+    pub fn recording_status(&self) -> Option<crate::recording::Status> {
+        self.recorder
+            .as_ref()
+            .map(|r| r.status())
+            .or_else(|| self.last_recording.clone())
+    }
+    pub fn recording_open(&self) -> bool {
+        self.recorder.is_some()
     }
     pub fn snapshot(&self) -> Snapshot {
         self.latest.lock().unwrap().clone()
     }
     pub fn snapshot_reader(&self) -> SnapshotReader {
         SnapshotReader(self.latest.clone())
+    }
+    /// Apply pending `/o show`, `/o hide`, `/o hud`, and `/o hud <gadget>` requests once to the
+    /// panel's current visibility. Multiple requests retain their combined effect.
+    pub fn apply_overlay_visibility(&self, visible: bool, hidden: &mut BTreeSet<Gadget>) -> bool {
+        let pending = std::mem::take(&mut *self.overlay_visibility.lock().unwrap());
+        for gadget in pending.gadget_toggles {
+            if !hidden.remove(&gadget) {
+                hidden.insert(gadget);
+            }
+        }
+        match pending.master {
+            Some(VisibilityCommand::Set(value)) => value,
+            Some(VisibilityCommand::Toggle) => !visible,
+            None => visible,
+        }
     }
 }
 
@@ -120,16 +248,18 @@ impl Drop for Runtime {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        self.stop_recording();
     }
 }
 
 fn request_roster(stream: &mut TcpStream) -> std::io::Result<()> {
-    for subtype in [13, 14, 7, 19] {
+    for subtype in [13, 14, 7, 19, 15, 8] {
         stream.write_all(&insim::tiny(subtype, 1))?;
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn receive_outgauge(
     bytes: &[u8],
     config: &Config,
@@ -138,9 +268,13 @@ fn receive_outgauge(
     socket: &UdpSocket,
     dashboard: &mut crate::dashboard::DashboardTelemetry,
     stats: &mut Snapshot,
+    recording: &Mutex<Option<crate::recording::Sink>>,
 ) {
     match outgauge::decode(bytes, config.outgauge_id) {
         Ok(sample) => {
+            if let Some(sink) = recording.lock().unwrap().as_ref() {
+                sink.packet(crate::recording::Stream::Outgauge, sample.time_ms, bytes);
+            }
             stats.outgauge_forward_error = None;
             for destination in &config.outgauge_forward {
                 if let Err(error) = socket.send_to(bytes, destination) {
@@ -160,18 +294,26 @@ fn receive_outgauge(
             }
             stats.outgauge_error = None;
         }
-        Err(error) => stats.outgauge_error = Some(error),
+        Err(error) => {
+            if let Some(sink) = recording.lock().unwrap().as_ref() {
+                sink.rejected(crate::recording::Stream::Outgauge, error.clone());
+            }
+            stats.outgauge_error = Some(error);
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run(
     config: Config,
-    initial: [u8; 44],
+    initial: Option<[u8; 44]>,
     udp: UdpSocket,
     output: Arc<Mutex<Snapshot>>,
     stop: Arc<AtomicBool>,
     store: Option<crate::config::SharedConfigStore>,
     lap_log: crate::lap_log::SharedLapLog,
+    recording: Arc<Mutex<Option<crate::recording::Sink>>>,
+    overlay_visibility: Arc<Mutex<PendingVisibility>>,
 ) {
     let start = Instant::now();
     let mut engine = Engine::new(config.follow_viewed_car);
@@ -185,23 +327,9 @@ fn run(
     let mut retry_records_at = 0;
     let mut stats = Snapshot::default();
     let mut dashboard = crate::dashboard::DashboardTelemetry::default();
-    let gauge = if config.needs_outgauge() && config.outgauge_bind != config.outsim_bind {
-        match UdpSocket::bind(config.outgauge_bind).and_then(|socket| {
-            socket.set_nonblocking(true)?;
-            Ok(socket)
-        }) {
-            Ok(socket) => Some(socket),
-            Err(error) => {
-                stats.outgauge_error = Some(format!(
-                    "cannot bind OutGauge {}: {error}",
-                    config.outgauge_bind
-                ));
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let mut gauge = None;
+    let mut gauge_retry_at = 0;
+    let mut connection_attempt: Option<std::sync::mpsc::Receiver<Result<TcpStream, String>>> = None;
     let mut connection: Option<TcpStream> = None;
     let mut framer = Framer::default();
     let mut retry_at = 0;
@@ -212,29 +340,79 @@ fn run(
     let mut light_request = 0_u8;
     let mut pending_light_request: Option<(u8, u8, String, u64)> = None;
     let mut lights_requested_at = 0;
+    let mut clock_requested_at = 0;
     let mut tcp_buffer = [0; 4096];
     let mut udp_buffer = [0; 1024];
     let expected_size =
         outsim::packet_size(config.outsim_options, config.expected_outsim_id()).unwrap();
     while !stop.load(Ordering::Relaxed) {
         let now = start.elapsed().as_millis() as u64;
-        if connection.is_none() && now >= retry_at {
+        let needs_gauge = config.needs_outgauge() || recording.lock().unwrap().is_some();
+        if needs_gauge
+            && gauge.is_none()
+            && config.outgauge_bind != config.outsim_bind
+            && now >= gauge_retry_at
+        {
+            match UdpSocket::bind(config.outgauge_bind).and_then(|socket| {
+                socket.set_nonblocking(true)?;
+                Ok(socket)
+            }) {
+                Ok(socket) => {
+                    gauge = Some(socket);
+                    stats.outgauge_error = None;
+                }
+                Err(error) => {
+                    stats.outgauge_error = Some(format!(
+                        "cannot bind OutGauge {}: {error}",
+                        config.outgauge_bind
+                    ));
+                    gauge_retry_at = now + 2000;
+                }
+            }
+        }
+        if let Some(initial) = initial
+            && connection.is_none()
+            && connection_attempt.is_none()
+            && now >= retry_at
+        {
             engine.clear();
             dashboard.clear();
             framer = Framer::default();
             protocol_ready = false;
             local_lights_supported = false;
             pending_light_request = None;
-            let attempt =
-                TcpStream::connect_timeout(&config.insim_address, Duration::from_millis(300))
-                    .and_then(|mut stream| {
-                        stream.set_nodelay(true)?;
-                        stream.set_read_timeout(Some(Duration::from_millis(10)))?;
-                        stream.set_write_timeout(Some(Duration::from_millis(100)))?;
-                        stream.write_all(&initial)?;
-                        Ok(stream)
-                    });
-            match attempt {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            let address = config.insim_address;
+            // Connect/handshake attempts must not block local UDP capture.
+            match thread::Builder::new()
+                .name("lfs-insim-connect".into())
+                .spawn(move || {
+                    let result = TcpStream::connect_timeout(&address, Duration::from_millis(300))
+                        .and_then(|mut stream| {
+                            stream.set_nodelay(true)?;
+                            stream.set_read_timeout(Some(Duration::from_millis(10)))?;
+                            stream.set_write_timeout(Some(Duration::from_millis(100)))?;
+                            stream.write_all(&initial)?;
+                            Ok(stream)
+                        })
+                        .map_err(|e| {
+                            format!(
+                                "insim {address}: {e}. In LFS type /insim {}.",
+                                address.port()
+                            )
+                        });
+                    let _ = sender.send(result);
+                }) {
+                Ok(_) => connection_attempt = Some(receiver),
+                Err(e) => {
+                    stats.error = Some(format!("cannot start InSim connector: {e}"));
+                    retry_at = now + 2000;
+                }
+            }
+        }
+        if let Some(result) = connection_attempt.as_ref().and_then(|r| r.try_recv().ok()) {
+            connection_attempt = None;
+            match result {
                 Ok(stream) => {
                     connection = Some(stream);
                     stats.error = None;
@@ -243,11 +421,7 @@ fn run(
                     received_at = now;
                 }
                 Err(error) => {
-                    stats.error = Some(format!(
-                        "InSim {}: {error}. In LFS type /insim {}.",
-                        config.insim_address,
-                        config.insim_address.port()
-                    ));
+                    stats.error = Some(error);
                     retry_at = now + 2000;
                 }
             }
@@ -313,6 +487,9 @@ fn run(
                                             pending_light_request = None;
                                         }
                                     }
+                                    Ok(Packet::LocalCommand(command)) if protocol_ready => {
+                                        overlay_visibility.lock().unwrap().receive(&command);
+                                    }
                                     Ok(Packet::Tiny(0)) => {
                                         if let Err(error) = stream.write_all(&insim::tiny(0, 0)) {
                                             disconnected = Some(error.to_string());
@@ -376,6 +553,15 @@ fn run(
                     ) => {}
                 Err(error) => disconnected = Some(error.to_string()),
             }
+            if protocol_ready
+                && disconnected.is_none()
+                && now.saturating_sub(clock_requested_at) >= 1000
+            {
+                if let Err(error) = stream.write_all(&insim::tiny(8, 1)) {
+                    disconnected = Some(error.to_string());
+                }
+                clock_requested_at = now;
+            }
             // OutGauge reports dashboard symbols, which may omit low beam on stock cars.
             // TINY_LCL reads the local human's actual light switch (InSim 10+).
             if protocol_ready
@@ -416,11 +602,11 @@ fn run(
         // Bound work per tick so a flood cannot starve rendering or shutdown.
         for _ in 0..256 {
             match udp.recv_from(&mut udp_buffer) {
-                Ok((size, peer)) if peer.ip() == config.insim_address.ip() => {
+                Ok((size, peer)) if peer.ip() == config.outsim_bind.ip() => {
                     let bytes = &udp_buffer[..size];
                     // A shared socket routes OutGauge separately from radar physics.
                     if matches!(size, 92 | 96) && size != expected_size {
-                        if config.needs_outgauge() {
+                        if needs_gauge {
                             if config.outgauge_bind == config.outsim_bind {
                                 receive_outgauge(
                                     bytes,
@@ -430,6 +616,7 @@ fn run(
                                     &udp,
                                     &mut dashboard,
                                     &mut stats,
+                                    &recording,
                                 );
                             } else {
                                 let id = if size == 96 {
@@ -447,11 +634,22 @@ fn run(
                     }
                     match outsim::decode(bytes, config.outsim_options, config.expected_outsim_id())
                     {
-                        Ok(sample) if protocol_ready => {
-                            engine.outsim(sample, start.elapsed().as_millis() as u64, &config)
+                        Ok(sample) => {
+                            if let Some(sink) = recording.lock().unwrap().as_ref() {
+                                sink.packet(
+                                    crate::recording::Stream::Outsim,
+                                    sample.time_ms,
+                                    bytes,
+                                );
+                            }
+                            if protocol_ready {
+                                engine.outsim(sample, start.elapsed().as_millis() as u64, &config);
+                            }
                         }
-                        Ok(_) => {}
                         Err(error) => {
+                            if let Some(sink) = recording.lock().unwrap().as_ref() {
+                                sink.rejected(crate::recording::Stream::Outsim, error.clone());
+                            }
                             stats.malformed_packets += 1;
                             stats.error = Some(error);
                         }
@@ -468,7 +666,7 @@ fn run(
         if let Some(socket) = &gauge {
             for _ in 0..256 {
                 match socket.recv_from(&mut udp_buffer) {
-                    Ok((size, peer)) if peer.ip() == config.insim_address.ip() => {
+                    Ok((size, peer)) if peer.ip() == config.outgauge_bind.ip() => {
                         receive_outgauge(
                             &udp_buffer[..size],
                             &config,
@@ -477,6 +675,7 @@ fn run(
                             socket,
                             &mut dashboard,
                             &mut stats,
+                            &recording,
                         );
                     }
                     Ok(_) => {}
@@ -487,6 +686,9 @@ fn run(
                     }
                 }
             }
+        }
+        if let Some(sink) = recording.lock().unwrap().as_ref() {
+            sink.tick();
         }
         let render_now = start.elapsed().as_millis() as u64;
         stats.dashboard = dashboard.frame(render_now, &config, engine.dashboard_player());
@@ -513,12 +715,18 @@ fn run(
         }
         stats.lap_records = engine.lap_records.frame();
         stats.lap_log = engine.lap_records.lap_log.lock().unwrap().frame();
+        stats.relative = engine.relative(render_now, &config);
         stats.connected = protocol_ready;
         stats.frame = engine.frame(render_now, &config);
         stats.gaps = engine.gaps(render_now, &config, &stats.frame);
         stats.delta = engine.delta(render_now, &config, &stats.frame);
         if !protocol_ready {
-            stats.frame.status = "Waiting for local LFS InSim connection".into();
+            stats.frame.status = if config.insim_enabled {
+                "Waiting for local LFS InSim connection"
+            } else {
+                "InSim disabled; local recording available"
+            }
+            .into();
         }
         stats.mci_sets = engine.mci_sets;
         stats.outsim_samples = engine.outsim_samples;

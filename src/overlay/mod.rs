@@ -28,6 +28,8 @@ pub mod native;
 #[cfg(feature = "desktop")]
 mod radar_style;
 #[cfg(feature = "desktop")]
+mod relative_style;
+#[cfg(feature = "desktop")]
 mod render;
 #[cfg(feature = "desktop")]
 pub mod session;
@@ -39,6 +41,37 @@ mod theme;
 mod window;
 #[cfg(feature = "desktop")]
 pub use desktop::run;
+
+/// Gadget identity shared by LFS commands and both presentation backends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Gadget {
+    Radar,
+    Ahead,
+    Behind,
+    Delta,
+    Dashboard,
+    Fuel,
+    LapRecords,
+    LapLog,
+    Relative,
+}
+
+impl Gadget {
+    pub(crate) fn from_command_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "radar" => Some(Self::Radar),
+            "ahead" => Some(Self::Ahead),
+            "behind" => Some(Self::Behind),
+            "delta" => Some(Self::Delta),
+            "speed" => Some(Self::Dashboard),
+            "fuel" => Some(Self::Fuel),
+            "lap-records" => Some(Self::LapRecords),
+            "lap-log" => Some(Self::LapLog),
+            "relative" => Some(Self::Relative),
+            _ => None,
+        }
+    }
+}
 
 /// None means foreground detection is not implemented on this desktop backend.
 pub fn game_foreground() -> Option<bool> {

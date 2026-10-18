@@ -98,6 +98,7 @@ fn camera_track_takeover_and_reused_plid_clear_history() {
         Packet::Camera(1),
         player(1, 0),
         Packet::State(State {
+            session: Default::default(),
             flags: 1,
             camera: 3,
             viewed: 1,
@@ -153,7 +154,7 @@ fn side_range_accepts_zero_and_filters_at_the_selected_distance() {
     tick(&mut engine, 20, 0.0);
     tick(&mut engine, 40, 0.0);
     for hud_style in [
-        lfs_openradar::config::HudStyle::Classic,
+        lfs_openradar::config::HudStyle::Gt7Inspired,
         lfs_openradar::config::HudStyle::Gt7Inspired,
     ] {
         // The fixture opponent is three metres to the right. Range includes

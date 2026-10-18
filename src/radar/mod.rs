@@ -87,6 +87,7 @@ pub struct Engine {
     fuel: crate::fuel::FuelEngine,
     pub lap_records: crate::lap_records::Recorder,
     gaps: GapEngine,
+    relative: crate::relative::RelativeEngine,
     players: BTreeMap<u8, Player>,
     state: Option<State>,
     selected: Option<u8>,
@@ -111,6 +112,7 @@ impl Engine {
         }
     }
     pub fn clear(&mut self) {
+        self.relative.clear();
         self.lap_records.disconnect();
         self.delta.clear();
         self.fuel.clear();
@@ -202,6 +204,7 @@ impl Engine {
         }
     }
     pub fn packet(&mut self, packet: Packet, time: u64) -> Result<(), String> {
+        self.relative.packet(&packet, time, &self.players);
         self.lap_records.packet(&packet);
         match packet {
             Packet::State(state) => {
@@ -387,6 +390,7 @@ impl Engine {
                         self.clear_radar_histories();
                     }
                     self.gaps.update(&cars, time);
+                    self.relative.update(&cars, time);
                     if let Some(car) = self
                         .selected
                         .and_then(|id| cars.iter().find(|c| c.plid == id))
@@ -523,6 +527,10 @@ impl Engine {
         }
         self.gaps
             .frame(self.selected, &self.players, now, config.stale_ms)
+    }
+    pub fn relative(&self, now: u64, config: &Config) -> crate::relative::RelativeFrame {
+        self.relative
+            .frame(self.select_driver(), &self.players, now, config.stale_ms)
     }
     pub fn delta(&self, now: u64, config: &Config, radar: &RadarFrame) -> crate::delta::DeltaFrame {
         let delta = self.delta.frame(now, config.stale_ms);

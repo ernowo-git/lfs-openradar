@@ -6,13 +6,19 @@ Fields omitted from older configurations use built-in defaults.
 
 ## Where the config lives
 
-Without `--config`, the app looks for `openradar.local.toml` in its **working
-directory**. This is the folder it was launched from; it is not automatically
-the executable's directory. In a terminal, the working directory is the current
-folder. A Windows shortcut's **Start in** field determines that folder.
+Without `--config`, Linux uses `~/.config/lfs-openradar/openradar.local.toml`,
+regardless of the launch folder. An absolute `XDG_CONFIG_HOME` overrides
+`~/.config`; empty or relative values are ignored. The app creates the default
+config directory automatically. If neither a usable `HOME` nor `XDG_CONFIG_HOME`
+is available, pass `--config` explicitly.
 
-For simple use, keep the executable and `openradar.local.toml` together, then
-launch from that folder. Set a shortcut's **Start in** to the same folder.
+Existing Linux configs in launch folders are not moved or loaded automatically.
+Copy the settings file you want to keep into the new default location before
+launching, or continue selecting the old file with `--config`.
+
+On Windows, the default remains `openradar.local.toml` in the **working
+directory**, the folder the app was launched from. Keep the executable and
+config together and set the shortcut's **Start in** to that folder.
 
 The config can also live in any other directory. Pass its path explicitly:
 
@@ -23,7 +29,7 @@ lfs-openradar.exe --config "C:\MySettings\openradar.local.toml"
 On Linux, for example:
 
 ```sh
-./lfs-openradar --config "$HOME/.config/openradar/openradar.local.toml"
+./lfs-openradar --config "$HOME/.config/lfs-openradar/openradar.local.toml"
 ```
 
 When running from the source repository:
@@ -41,12 +47,12 @@ Quote paths containing spaces.
 ## Loading and saving
 
 - If the default `openradar.local.toml` is missing, the app starts with built-in
-  defaults. **Save settings** creates that file in the working directory.
+  defaults. **Save settings** creates that file at the platform's default path.
 - If you pass `--config`, the file must already exist and contain valid TOML.
   A missing or invalid explicit config produces a startup error.
 - **Save settings** writes the current panel settings to the same path selected
-  at launch, including an explicit `--config` path. The folder must exist and be
-  writable.
+  at launch, including an explicit `--config` path. An explicit config's folder
+  must already exist and be writable.
 - **Apply / reconnect** restarts the live telemetry connection with the panel's
   current settings. Saving a file alone does not reconnect the worker.
 - When editing TOML externally, restart the app to load the changes. It does not
@@ -72,25 +78,42 @@ for monitor selection, independent scales, fitting, and configuration examples.
 Set the top-level `hud_style` before any `[section]` headings:
 
 ```toml
-hud_style = "gt" # default; or "classic"
-hud_debug = false # show gap diagnostics in either HUD style when true
+hud_style = "gt" # GT is the sole HUD style
+hud_debug = false # show gap diagnostics when true
 ```
 
-Missing settings default to GT; unknown style names are rejected. The previous
-`gt7-inspired` value is still accepted and saved as `gt`. The
-**Gadgets** tab's **HUD style** selector applies the choice immediately and
-**Save settings** persists it. External TOML edits require restarting the app.
-Changing themes retains each gadget's position, scale, and enabled state.
-**HUD debug information** in the Gadgets tab controls `hud_debug`. It defaults
-to false and reveals passage-history status and estimate measurement age in gap
-windows for both Classic and GT.
+Missing settings default to GT; unknown style names are rejected. Legacy
+`classic` and `gt7-inspired` values load as GT and save as `gt`. Existing gadget
+positions, scales, and enablement are preserved. The style selector has been
+removed. **HUD debug information** in Gadgets reveals passage-history status
+and estimate measurement age in the existing gap gadgets.
 
-For source customization, Classic colors and dimensions remain in
-`src/overlay/radar_style.rs`, `gap_style.rs`, and `delta_style.rs`, with common
-panel defaults in `gadget_style.rs`. The additional theme is defined in
-`src/overlay/gt7_style.rs`. `theme.rs` resolves the selection and `render.rs`
-draws the gadgets. The same selected dimensions drive native windows and
-canvas fitting.
+GT colors and layout are defined in `src/overlay/gt7_style.rs`; Relative uses
+`src/overlay/relative_style.rs`. The same painters and base dimensions serve
+both overlay backends.
+
+## Relative
+
+Relative defaults to disabled. It uses the existing InSim connection and does
+not need OutSim or OutGauge samples. Session-clock requests use the negotiated
+InSim 9 time units, including when LFS itself reports protocol 10.
+
+```toml
+[relative]
+enabled = true
+window_x = 24.0
+window_y = 360.0
+scale = 1.0
+
+[wayland.relative]
+x = 24.0
+y = 360.0
+scale = 1.0
+```
+
+Window and native Wayland positions/scales remain separate. Scales accept
+0.5–2.0. The panel is 520 × 360 logical pixels before scaling. See
+[Relative usage](usage.md#relative) for gaps, session timing, and reliability.
 
 ## InSim password
 
@@ -160,7 +183,7 @@ calibration. A height gate reduces bridge/overpass detections but needs track
 testing.
 
 `side_m` accepts 0–100 metres; the desktop slider covers 0–12. Side range controls
-uniform zoom in Classic and horizontal placement in GT. Detection includes
+horizontal placement in GT. Detection includes
 half the footprint diagonal to retain cars touching the region.
 Other radar distances and car dimensions must remain positive.
 
@@ -172,7 +195,7 @@ For gadget placement and performance-delta behavior, see the usage guide's
 
 Enable **Speed dashboard** in Gadgets. It has its own position mode, scale,
 and overlay window. Its appearance follows the supplied speed dashboard reference
-in either HUD style. Its body and RPM header use #252525 at 40% opacity.
+with GT styling. Its body and RPM header use #252525 at 40% opacity.
 The dashboard uses OutGauge independently of radar OutSim.
 OutGauge can use its own UDP port or share the OutSim port. Match
 `outgauge_bind` and `outgauge_id` to LFS’s existing OutGauge destination and ID.
@@ -306,7 +329,7 @@ percentage; no tank-capacity setting is needed. Old `fuel_tank_litres` entries
 are accepted for compatibility and removed when settings are saved.
 
 Fuel defaults to disabled in older configurations. It shares the dashboard's
-#252525 body at 40% opacity and retains its supplied design in either HUD style.
+#252525 body at 40% opacity and retains its supplied GT design.
 See [Fuel usage](usage.md#fuel) for the range, margin, and REFUEL meanings.
 
 ## Lap records
@@ -373,5 +396,5 @@ scale = 1.0
 Native Wayland placement is independent under `[wayland.lap_log]`, using `x`,
 `y` and `scale`. Old configurations default to a disabled gadget. Lap history
 and session best are memory-only and never enter the configuration file. The
-latest eight laps are visible, using GT styling in either HUD style selection.
+latest eight laps are visible, using GT styling.
 See [Lap-time log usage](usage.md#lap-time-log) for lifetime and delta behavior.

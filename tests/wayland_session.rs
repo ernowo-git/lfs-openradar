@@ -5,6 +5,82 @@ use lfs_openradar::{
 };
 
 #[test]
+fn temporary_gadget_hiding_preserves_native_layout_enablement_and_save() {
+    use lfs_openradar::overlay::Gadget;
+    use std::collections::BTreeSet;
+    let mut config = Config::default();
+    config.gap_ahead.enabled = true;
+    config.gap_behind.enabled = true;
+    config.performance_delta.enabled = true;
+    config.speed_dashboard.enabled = true;
+    config.fuel.enabled = true;
+    config.lap_records.enabled = true;
+    config.lap_log.enabled = true;
+    config.relative.enabled = true;
+    let gadgets = [
+        Gadget::Radar,
+        Gadget::Ahead,
+        Gadget::Behind,
+        Gadget::Delta,
+        Gadget::Dashboard,
+        Gadget::Fuel,
+        Gadget::LapRecords,
+        Gadget::LapLog,
+        Gadget::Relative,
+    ];
+    let mut session = OverlaySession::new(config.clone(), true);
+    session.outputs_changed(vec![Monitor {
+        name: "DP-1".into(),
+        size: [1920.0, 1080.0],
+        scale: 1.0,
+    }]);
+    let baseline = toml::to_string(&session.config_for_save()).unwrap();
+    let snapshot = lfs_openradar::runtime::Snapshot::default();
+    session.hidden_gadgets = BTreeSet::from(gadgets);
+    assert!(!session.status().visible);
+    assert!(session.status().gadgets.iter().all(|g| g.enabled));
+    assert!(
+        session
+            .paint(&eframe::egui::Context::default(), &snapshot)
+            .shapes
+            .is_empty()
+    );
+    assert_eq!(
+        toml::to_string(&session.config_for_save()).unwrap(),
+        baseline
+    );
+
+    session.hidden_gadgets.remove(&Gadget::Relative);
+    assert!(session.status().visible);
+    let output = session.paint(&eframe::egui::Context::default(), &snapshot);
+    assert!(!output.shapes.is_empty());
+    assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+        eframe::egui::Shape::Text(text) if text.galley.job.text == "AHEAD")));
+    session.update(config.clone(), false);
+    assert!(!session.status().visible);
+    session.update(config.clone(), true);
+    session.failure("test compositor failure".into());
+    session.retry();
+    assert_eq!(session.hidden_gadgets.len(), 8);
+    assert!(session.status().visible);
+    assert_eq!(
+        toml::to_string(&session.config_for_save()).unwrap(),
+        baseline
+    );
+
+    // Removing a temporary hide never enables a configured-disabled gadget.
+    config.relative.enabled = false;
+    session.update(config, true);
+    assert!(!session.status().visible);
+    assert!(
+        session
+            .paint(&eframe::egui::Context::default(), &snapshot)
+            .shapes
+            .is_empty()
+    );
+}
+
+#[test]
 fn first_monitor_selection_is_retained_when_it_disappears_before_saving() {
     let a = Monitor {
         name: "DP-1".into(),
@@ -75,7 +151,7 @@ fn explicit_save_keeps_requested_scales_but_persists_displayed_positions() {
     assert_eq!(saved.wayland.radar.scale, 2.0);
     assert_eq!(saved.wayland.monitor.as_deref(), Some("DP-1"));
     assert!(saved.gap_ahead.enabled);
-    assert_eq!(session.status().gadgets.len(), 8);
+    assert_eq!(session.status().gadgets.len(), 9);
 }
 
 #[test]
@@ -239,4 +315,46 @@ fn lap_log_alone_keeps_native_hud_visible_with_independent_placement_and_scale()
         true,
     );
     assert!(!session.status().visible);
+}
+
+#[test]
+fn relative_uses_native_geometry_and_preserves_the_separate_window_layout() {
+    use lfs_openradar::overlay::session::Gadget;
+    let mut config = Config {
+        radar_enabled: false,
+        ..Default::default()
+    };
+    config.relative.enabled = true;
+    config.relative.scale = 0.5;
+    config.relative.window_x = Some(-800.0);
+    config.wayland.relative.x = Some(24.0);
+    config.wayland.relative.y = Some(80.0);
+    config.wayland.relative.scale = 1.25;
+    let mut session = OverlaySession::new(config, true);
+    session.outputs_changed(vec![Monitor {
+        name: "DP-1".into(),
+        size: [1920.0, 1080.0],
+        scale: 1.25,
+    }]);
+    let status = session.status();
+    assert!(status.visible);
+    let geometry = status
+        .gadgets
+        .iter()
+        .find(|g| g.gadget == Gadget::Relative)
+        .unwrap();
+    assert!(geometry.enabled);
+    assert_eq!(geometry.rect.min, eframe::egui::pos2(24.0, 80.0));
+    assert_eq!(geometry.rect.size(), eframe::egui::vec2(650.0, 450.0));
+    let snapshot = lfs_openradar::runtime::Snapshot {
+        relative: lfs_openradar::demo::relative_preview(),
+        ..Default::default()
+    };
+    let output = session.paint(&eframe::egui::Context::default(), &snapshot);
+    assert!(output.shapes.iter().any(|shape|matches!(&shape.shape,eframe::egui::Shape::Text(text) if text.galley.text()=="RELATIVE")));
+    let saved = session.config_for_save();
+    assert_eq!(saved.relative.window_x, Some(-800.0));
+    assert_eq!(saved.relative.scale, 0.5);
+    assert_eq!(saved.wayland.relative.x, Some(24.0));
+    assert_eq!(saved.wayland.relative.scale, 1.25);
 }

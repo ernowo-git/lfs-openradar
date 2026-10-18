@@ -14,6 +14,8 @@ pub mod lap_records;
 pub mod lfs;
 pub mod overlay;
 pub mod radar;
+pub mod recording;
+pub mod relative;
 pub mod runtime;
 pub mod setup;
 

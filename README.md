@@ -20,10 +20,12 @@ primary platform; Linux/X11 support is experimental.
 
 ## Features
 
+- [Local OutSim/OutGauge recording, with an optional InSim connection](docs/local-recording.md)
 - Proximity radar
 - [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
 - [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)
 - [Per-track/car PB lap splits and independent best sectors](docs/usage.md#lap-records)
+- [Seven-row on-track Relative panel with session timing and lapped traffic](docs/usage.md#relative)
 - Real-time gap ahead/behind indicator
 - [Session lap-time log with session best and previous-lap deltas](docs/usage.md#lap-time-log)
 - Lap performance delta

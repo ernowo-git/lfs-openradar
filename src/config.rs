@@ -48,22 +48,21 @@ pub struct WaylandSettings {
     pub fuel: GadgetPlacement,
     pub lap_records: GadgetPlacement,
     pub lap_log: GadgetPlacement,
+    pub relative: GadgetPlacement,
 }
 
 /// Built-in overlay appearance, independent of the desktop renderer.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum HudStyle {
-    Classic,
     #[default]
-    #[serde(rename = "gt", alias = "gt7-inspired")]
+    #[serde(rename = "gt", alias = "gt7-inspired", alias = "classic")]
     Gt7Inspired,
 }
 
 impl HudStyle {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Classic => "Classic",
             Self::Gt7Inspired => "GT",
         }
     }
@@ -113,6 +112,8 @@ pub struct CarProfile {
 pub struct Config {
     pub overlay_backend: OverlayBackend,
     pub wayland: WaylandSettings,
+    /// Disable InSim for independent local telemetry recording.
+    pub insim_enabled: bool,
     pub insim_address: SocketAddr,
     pub insim_password: InSimPassword,
     /// Folder containing the user's LFS.exe; only the setup button edits LFS.
@@ -132,6 +133,7 @@ pub struct Config {
     pub fuel: GapSettings,
     pub lap_records: GapSettings,
     pub lap_log: GapSettings,
+    pub relative: GapSettings,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub track_records: crate::lap_records::Records,
     /// Percentage of the configured RPM limit that starts the red/blue blink.
@@ -156,7 +158,7 @@ pub struct Config {
     pub overlay_y: f32,
     pub overlay_size: f32,
     pub hud_style: HudStyle,
-    /// Show diagnostic status and measurement age in gap gadgets for either HUD style.
+    /// Show diagnostic status and measurement age in gap gadgets.
     pub hud_debug: bool,
     pub hide_when_background: bool,
     /// Key that toggles all overlays; "None" disables the shortcut.
@@ -198,6 +200,7 @@ impl std::fmt::Debug for InSimPassword {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            insim_enabled: true,
             insim_address: "127.0.0.1:29999".parse().unwrap(),
             overlay_backend: OverlayBackend::default(),
             wayland: WaylandSettings::default(),
@@ -219,6 +222,7 @@ impl Default for Config {
             fuel: GapSettings::default(),
             lap_records: GapSettings::default(),
             lap_log: GapSettings::default(),
+            relative: GapSettings::default(),
             track_records: BTreeMap::new(),
             rpm_blink_threshold_percent: 95,
             rpm_blink_interval_ms: 100,
@@ -347,6 +351,8 @@ impl Config {
             settings.legacy_x = None;
             settings.legacy_y = None;
         }
+        self.relative.window_x.get_or_insert(24.0);
+        self.relative.window_y.get_or_insert(360.0);
     }
     pub fn validate(&self) -> Result<(), String> {
         for (track, cars) in &self.track_records {
@@ -379,6 +385,7 @@ impl Config {
             &self.wayland.fuel,
             &self.wayland.lap_records,
             &self.wayland.lap_log,
+            &self.wayland.relative,
         ]
         .into_iter()
         .enumerate()
@@ -449,7 +456,9 @@ impl Config {
             }
         }
         self.overlay_toggle_key()?;
-        crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
+        if self.insim_enabled {
+            crate::lfs::insim::init(self.mci_interval_ms, &self.insim_password.0)?;
+        }
         for settings in [
             &self.gap_ahead,
             &self.gap_behind,
@@ -458,6 +467,7 @@ impl Config {
             &self.fuel,
             &self.lap_records,
             &self.lap_log,
+            &self.relative,
         ] {
             if [settings.window_x, settings.window_y]
                 .iter()
@@ -473,14 +483,16 @@ impl Config {
                 return Err("Gap screen positions must be finite and scale 0.5..2".into());
             }
         }
-        if !self.insim_address.ip().is_loopback()
+        if (self.insim_enabled
+            && (!self.insim_address.ip().is_loopback() || self.insim_address.port() == 0))
             || !self.outsim_bind.ip().is_loopback()
-            || self.insim_address.port() == 0
             || self.outsim_bind.port() == 0
         {
             return Err("Use nonzero ports on loopback addresses for the local LFS client".into());
         }
-        if !(10..=8000).contains(&self.mci_interval_ms) || !self.mci_interval_ms.is_multiple_of(10)
+        if self.insim_enabled
+            && (!(10..=8000).contains(&self.mci_interval_ms)
+                || !self.mci_interval_ms.is_multiple_of(10))
         {
             return Err("MCI interval must be 10..8000 ms in steps of 10".into());
         }

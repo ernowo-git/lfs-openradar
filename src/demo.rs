@@ -32,6 +32,7 @@ impl Default for Demo {
                         kind,
                         name: name.into(),
                         model: "XRG".into(),
+                        in_pits: false,
                         abs_enabled: true,
                         in_garage: false,
                     }),
@@ -42,6 +43,7 @@ impl Default for Demo {
         engine
             .packet(
                 Packet::State(State {
+                    session: Default::default(),
                     flags: 1,
                     camera: 3,
                     viewed: 1,
@@ -192,6 +194,7 @@ impl Demo {
             fuel: fuel_preview(),
             lap_records: lap_records_preview(),
             lap_log: lap_log_preview(),
+            relative: relative_preview(),
             version: "synthetic".into(),
             frame,
             mci_sets: self.engine.mci_sets,
@@ -257,5 +260,49 @@ pub fn lap_log_preview() -> crate::lap_log::LapLogFrame {
                 delta_ms,
             })
             .collect(),
+    }
+}
+
+/// Synthetic panel sample; never presented as live telemetry.
+pub fn relative_preview() -> crate::relative::RelativeFrame {
+    use crate::relative::{RelativeFrame, RelativeRow};
+    RelativeFrame {
+        rows: std::array::from_fn(|i| {
+            Some(RelativeRow {
+                plid: i as u8 + 1,
+                position: Some([10, 1, 11, 12, 2, 13, 14][i]),
+                name: [
+                    "Driver ahead",
+                    "Race leader",
+                    "Pitting driver",
+                    "YOU",
+                    "Lapped traffic",
+                    "Driver behind",
+                    "Following driver",
+                ][i]
+                    .into(),
+                seconds: if i == 2 {
+                    None
+                } else {
+                    Some([12.0, 7.4, 2.7, 0.0, 1.8, 4.8, 6.3][i])
+                },
+                lap_difference: if i == 1 {
+                    1
+                } else if i == 4 {
+                    -1
+                } else {
+                    0
+                },
+                pit: i == 2,
+                fastest: i == 1,
+            })
+        }),
+        session: "RACE".into(),
+        elapsed_ms: Some(1_201_000),
+        duration_ms: Some(3_600_000),
+        current_lap: Some(12),
+        projected_laps: Some(36.2),
+        status: "DEMO · Estimated on-track gaps".into(),
+        ..Default::default()
     }
 }

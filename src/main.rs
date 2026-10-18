@@ -16,20 +16,49 @@ struct Options {
     headless: bool,
     seconds: Option<u64>,
     screenshot: Option<PathBuf>,
+    no_insim: bool,
+    record: Option<PathBuf>,
+    track: String,
+    recover: Option<PathBuf>,
 }
 fn options() -> Result<Option<Options>, String> {
-    let mut result = Options::default();
+    let mut result = Options {
+        track: "BL1".into(),
+        ..Default::default()
+    };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "LFS OpenRadar\n\n  --demo                 Synthetic radar preview, no sockets\n  --headless             Console telemetry diagnostics\n  --config PATH          Load a TOML configuration\n  --seconds N            Exit after N seconds (1..3600)\n  --screenshot PATH      Save the demo control-panel preview as PNG\n\nDefault: native control panel; reads openradar.local.toml if present.\nInSim/MCI and OutSim are both required for live radar output."
+                    "LFS OpenRadar\n\n  --demo                 Synthetic radar preview, no sockets\n  --headless             Console telemetry diagnostics\n  --config PATH          Load a TOML configuration\n  --seconds N            Exit after N seconds (1..3600)\n  --screenshot PATH      Save the demo control-panel preview as PNG\n\nDefault: native control panel.\nInSim/MCI and OutSim are both required for live radar output."
                 );
+                #[cfg(target_os = "linux")]
+                println!(
+                    "Default config: $XDG_CONFIG_HOME/lfs-openradar/openradar.local.toml (fallback: ~/.config/lfs-openradar/openradar.local.toml)."
+                );
+                #[cfg(not(target_os = "linux"))]
+                println!("Default config: openradar.local.toml in the working directory.");
                 println!(
                     "  --overlay-backend NAME Choose auto (default), window, or wayland (Linux/KDE); overrides the saved choice."
                 );
+                println!(
+                    "  --no-insim             Disable InSim; local recording stays available\n  --record DIRECTORY     Record local UDP telemetry (headless); Enter stops if no --seconds\n  --track CODE           User-declared recording track (default BL1)\n  --recover-recording P  Recover complete lines from an interrupted recording"
+                );
                 return Ok(None);
+            }
+            "--no-insim" => result.no_insim = true,
+            "--record" => {
+                result.record = Some(PathBuf::from(
+                    args.next().ok_or("--record needs a directory")?,
+                ));
+                result.headless = true;
+            }
+            "--track" => result.track = args.next().ok_or("--track needs a track code")?,
+            "--recover-recording" => {
+                result.recover = Some(PathBuf::from(
+                    args.next().ok_or("--recover-recording needs a path")?,
+                ))
             }
             "--demo" => result.demo = true,
             "--overlay-backend" => {
@@ -68,16 +97,59 @@ fn options() -> Result<Option<Options>, String> {
     {
         return Err("--screenshot requires a desktop --demo with at least 3 seconds".into());
     }
+    if result.record.is_some() && result.demo {
+        return Err("--record cannot be used with --demo".into());
+    }
     Ok(Some(result))
 }
+
+fn config_path(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute())
+                    .map(|home| home.join(".config"))
+            })
+            .ok_or(
+                "cannot locate config directory; set HOME or XDG_CONFIG_HOME, or use --config",
+            )?;
+        let directory = base.join("lfs-openradar");
+        std::fs::create_dir_all(&directory).map_err(|error| {
+            format!(
+                "cannot create config directory {}: {error}",
+                directory.display()
+            )
+        })?;
+        Ok(directory.join("openradar.local.toml"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(PathBuf::from("openradar.local.toml"))
+    }
+}
+
 fn run() -> Result<(), String> {
     let Some(options) = options()? else {
         return Ok(());
     };
+    if let Some(source) = options.recover {
+        let mut name = source.as_os_str().to_os_string();
+        name.push(".recovered.jsonl");
+        let destination = PathBuf::from(name);
+        lfs_openradar::recording::recover(&source, &destination)?;
+        println!("Recovered interrupted recording: {}", destination.display());
+        return Ok(());
+    }
     let explicit_config = options.config.is_some();
-    let path = options
-        .config
-        .unwrap_or_else(|| PathBuf::from("openradar.local.toml"));
+    let path = config_path(options.config)?;
     let mut config = if explicit_config || path.exists() {
         Config::load(&path)?
     } else {
@@ -86,9 +158,12 @@ fn run() -> Result<(), String> {
     if let Some(backend) = options.overlay_backend {
         config.overlay_backend = backend;
     }
+    if options.no_insim {
+        config.insim_enabled = false;
+    }
     config.validate()?;
     if options.headless {
-        let runtime = if options.demo {
+        let mut runtime = if options.demo {
             None
         } else {
             Some(Runtime::start_with_store(
@@ -97,18 +172,61 @@ fn run() -> Result<(), String> {
                 Some(lfs_openradar::config::ConfigStore::open(&path)?),
             )?)
         };
+        let recording = options.record.is_some();
+        if let Some(directory) = options.record {
+            runtime
+                .as_mut()
+                .unwrap()
+                .start_recording(lfs_openradar::recording::Options {
+                    directory,
+                    track: options.track,
+                    ..Default::default()
+                })?;
+            println!(
+                "Recording local telemetry; track is user-declared. No official timing or identity verification."
+            );
+        }
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if recording && options.seconds.is_none() {
+            println!("Press Enter to stop and finalize the recording.");
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut line = String::new();
+                let _ = std::io::stdin().read_line(&mut line);
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
         let mut demo = options.demo.then(Demo::default);
         let start = Instant::now();
         let mut next_print = 0;
-        let limit = options.seconds.unwrap_or(10);
-        while start.elapsed().as_secs() < limit {
+        let limit = options.seconds.or((!recording).then_some(10));
+        while limit.is_none_or(|limit| start.elapsed().as_secs() < limit)
+            && !stop.load(std::sync::atomic::Ordering::Relaxed)
+        {
             let now = start.elapsed().as_millis() as u64;
             let snapshot = if let Some(demo) = &mut demo {
                 demo.snapshot(now, &config)
             } else {
                 runtime.as_ref().unwrap().snapshot()
             };
+            if let Some(status) = runtime.as_ref().and_then(|r| r.recording_status())
+                && let Some(error) = status.error
+            {
+                return Err(error);
+            }
             if now >= next_print {
+                if let Some(status) = runtime.as_ref().and_then(|r| r.recording_status()) {
+                    println!(
+                        "Recording: {}ms OutSim={} OutGauge={} gaps={} rejected={} bytes={} | {}",
+                        status.elapsed_ms,
+                        status.packets[0],
+                        status.packets[1],
+                        status.gaps,
+                        status.rejected,
+                        status.bytes,
+                        status.path.display()
+                    );
+                }
                 println!(
                     "{} | MCI sets={} OutSim={} rejected={} malformed={} nearby={} ahead={:?}s behind={:?}s",
                     snapshot.frame.status,
@@ -144,6 +262,18 @@ fn run() -> Result<(), String> {
                         eprintln!("outgauge: {error}");
                     }
                 }
+                if config.relative.enabled {
+                    println!(
+                        "Relative: {} | {} elapsed={:?}ms lap={:?} total={:?} projected={:?} rows={:?}",
+                        snapshot.relative.status,
+                        snapshot.relative.session,
+                        snapshot.relative.elapsed_ms,
+                        snapshot.relative.current_lap,
+                        snapshot.relative.total_laps,
+                        snapshot.relative.projected_laps,
+                        snapshot.relative.rows
+                    );
+                }
                 if config.lap_log.enabled {
                     println!(
                         "Lap-time log: best={:?}ms latest={:?}",
@@ -174,6 +304,18 @@ fn run() -> Result<(), String> {
                 next_print = now + 1000;
             }
             std::thread::sleep(Duration::from_millis(20));
+        }
+        if let Some(status) = runtime.as_mut().and_then(|r| r.stop_recording()) {
+            println!(
+                "Saved recording: {} (OutSim={}, OutGauge={}, gaps={})",
+                status.path.display(),
+                status.packets[0],
+                status.packets[1],
+                status.gaps
+            );
+            if let Some(error) = status.error {
+                return Err(error);
+            }
         }
         return Ok(());
     }

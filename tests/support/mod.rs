@@ -46,6 +46,7 @@ pub fn player(id: u8, kind: u8) -> Packet {
         kind,
         name: format!("Driver {id}"),
         model: "XRG".into(),
+        in_pits: false,
         abs_enabled: false,
         in_garage: false,
     })
@@ -57,6 +58,7 @@ pub fn setup() -> Engine {
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 1,
                 camera: 3,
                 viewed: 1,

@@ -4,10 +4,7 @@ use super::{
     delta_style::{DeltaStyle, ReferenceTimeStripStyle},
     gadget_style::{CellStyle, PanelStyle, TextFont, TextStyle, TimingCellStyle},
     gap_style::{DriverRowStyle, GapStyle},
-    radar_style::{
-        self, MarkerShape, ProximityStyle, RadarCarStyle, RadarStyle, RadialBackgroundStyle,
-        SideWarningStyle,
-    },
+    radar_style::{ProximityStyle, RadarStyle, WarningStyle},
 };
 use eframe::egui::{Align2, Color32, Stroke, Vec2};
 
@@ -50,88 +47,49 @@ const NUMERIC: TextStyle = TextStyle {
     ..BODY
 };
 
-const PLAYER: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(185, 42, 25),
-    border_color: Color32::from_rgb(245, 167, 140),
-    border_width: 0.8,
-};
-const NEARBY: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(43, 115, 159),
-    border_color: Color32::from_rgb(152, 208, 239),
-    ..PLAYER
-};
-const ALONGSIDE: RadarCarStyle = RadarCarStyle { ..NEARBY };
-const CONTACT: RadarCarStyle = RadarCarStyle { ..NEARBY };
-const UNCERTAIN: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(119, 128, 140),
-    border_color: MUTED,
-    ..PLAYER
-};
-
 pub(super) const RADAR: RadarStyle = RadarStyle {
-    player: &PLAYER,
-    nearby: &NEARBY,
-    alongside: &ALONGSIDE,
-    potential_contact: &CONTACT,
-    uncertain: &UNCERTAIN,
-    marker: MarkerShape::Arrow,
-    fill_brightness: 1.0,
+    player: WHITE,
     panel: PanelStyle {
         size: Vec2::new(320.0, 320.0),
         ..PANEL
     },
-    grid_color: Color32::from_rgba_unmultiplied_const(217, 224, 244, 150),
-    grid_width: 0.8,
-    center_band: Color32::TRANSPARENT,
-    heading: Some(TextStyle {
-        font_size: 18.0,
-        offset: Vec2::new(0.0, 258.0),
-        align: Align2::CENTER_TOP,
-        outline: Stroke {
-            width: 0.25,
-            color: WHITE,
-        },
-        ..BODY
-    }),
+    grid_color: WHITE,
+    grid_width: 1.2,
     proximity: Some(ProximityStyle {
-        origin: Vec2::new(0.5, 0.38),
-        guide_center: Vec2::new(0.5, 0.30),
+        origin: Vec2::new(0.5, 0.5),
+        guide_center: Vec2::new(0.5, 0.5),
         guide_radius: 0.44,
-        ring_fractions: [0.375, 0.68, 1.0],
-        top: 0.18,
-        bottom: 0.78,
+        top: 0.06,
+        bottom: 0.94,
         side_inset: 0.10,
-        background: Some(RadialBackgroundStyle {
-            center_color: Color32::BLACK,
-            edge_color: Color32::from_rgb(96, 96, 96),
-            center_opacity: 0.40,
-            edge_opacity: 0.0,
-        }),
-        side_warnings: Some(SideWarningStyle {
-            inner_radius: 0.68,
-            contact_inner_radius: 0.375,
-            half_angle: 0.55,
-            fill_opacity: 0.25,
-            border_width: 2.0,
-            center_tolerance_m: 0.3,
-            nearby: Color32::from_rgb(236, 175, 63),
-            alongside: Color32::from_rgb(255, 195, 75),
-            contact: RED,
+        warnings: WarningStyle {
+            band_height: 0.36,
+            contact_band_height: 0.52,
+            fill_opacity: 0.9,
+            edge_fade: 0.18,
+            center_tolerance_m: 0.9,
+            nearby: Color32::from_rgb(255, 210, 0),
+            alongside: Color32::from_rgb(255, 20, 0),
+            contact: Color32::from_rgb(255, 0, 0),
             uncertain: MUTED,
-        }),
+        },
         marker_size: Vec2::new(14.0, 18.0),
-        heading: "Radar",
     }),
-    player_label: None,
     paused: TextStyle {
         font: TextFont::Body,
         color: WHITE,
-        ..radar_style::CLASSIC.paused
+        font_size: 14.0,
+        offset: Vec2::ZERO,
+        align: Align2::CENTER_CENTER,
+        outline: Stroke::NONE,
     },
     hint: TextStyle {
         font: TextFont::Body,
         color: MUTED,
-        ..radar_style::CLASSIC.hint
+        font_size: 10.0,
+        offset: Vec2::new(0.0, -10.0),
+        align: Align2::CENTER_BOTTOM,
+        outline: Stroke::NONE,
     },
 };
 

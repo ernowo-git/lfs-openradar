@@ -63,6 +63,7 @@ fn dashboard_requires_matching_fresh_ordered_samples_and_clears_on_lifecycle() {
         kind: 0,
         name: "You".into(),
         model: "XFG".into(),
+        in_pits: false,
         abs_enabled: true,
         in_garage: false,
     };
@@ -185,6 +186,7 @@ fn switching_drivers_accepts_the_new_cars_clock_immediately() {
         kind: 0,
         name: "You".into(),
         model: "XFG".into(),
+        in_pits: false,
         abs_enabled: true,
         in_garage: false,
     };
@@ -301,6 +303,7 @@ fn local_lights_expire_and_never_transfer_to_an_ai_or_another_car() {
         kind: 0,
         name: "You".into(),
         model: "XFG".into(),
+        in_pits: false,
         abs_enabled: true,
         in_garage: false,
     };

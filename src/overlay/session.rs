@@ -1,10 +1,12 @@
 //! Caller-facing state of the grouped HUD; compositor observations enter here.
+pub use super::Gadget;
 use crate::config::{Config, GadgetPlacement};
 use crate::{
     demo::Demo,
     runtime::{Snapshot, SnapshotReader},
 };
 use eframe::egui::{Pos2, Rect, Vec2};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
@@ -23,18 +25,6 @@ impl SnapshotSource {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Gadget {
-    Radar,
-    Ahead,
-    Behind,
-    Delta,
-    Dashboard,
-    Fuel,
-    LapRecords,
-    LapLog,
-}
-
 impl Gadget {
     pub(crate) fn window_settings_mut(
         self,
@@ -49,6 +39,7 @@ impl Gadget {
             Self::Fuel => Some(&mut config.fuel),
             Self::LapRecords => Some(&mut config.lap_records),
             Self::LapLog => Some(&mut config.lap_log),
+            Self::Relative => Some(&mut config.relative),
         }
     }
     pub fn placement(self, config: &Config) -> &GadgetPlacement {
@@ -61,6 +52,7 @@ impl Gadget {
             Self::Fuel => &config.wayland.fuel,
             Self::LapRecords => &config.wayland.lap_records,
             Self::LapLog => &config.wayland.lap_log,
+            Self::Relative => &config.wayland.relative,
         }
     }
     pub fn placement_mut(self, config: &mut Config) -> &mut GadgetPlacement {
@@ -73,6 +65,7 @@ impl Gadget {
             Self::Fuel => &mut config.wayland.fuel,
             Self::LapRecords => &mut config.wayland.lap_records,
             Self::LapLog => &mut config.wayland.lap_log,
+            Self::Relative => &mut config.wayland.relative,
         }
     }
 }
@@ -109,6 +102,8 @@ pub struct OverlayStatus {
 pub struct OverlaySession {
     pub(crate) config: Config,
     pub(crate) show: bool,
+    /// Temporary visibility overrides; excluded from saved configuration.
+    pub hidden_gadgets: BTreeSet<Gadget>,
     error: Option<String>,
     outputs: Vec<Monitor>,
     ready: bool,
@@ -162,7 +157,7 @@ impl OverlaySession {
             let painter = ctx.layer_painter(egui::LayerId::background());
             let theme = theme::resolve(config.hud_style);
             for geometry in &status.gadgets {
-                if !geometry.enabled {
+                if !geometry.enabled || self.hidden_gadgets.contains(&geometry.gadget) {
                     continue;
                 }
                 let painter = painter.with_clip_rect(geometry.rect);
@@ -200,6 +195,9 @@ impl OverlaySession {
                         &config,
                     ),
                     Gadget::Fuel => fuel_style::paint(&painter, geometry.rect, &snapshot.fuel),
+                    Gadget::Relative => {
+                        super::relative_style::paint(&painter, geometry.rect, &snapshot.relative)
+                    }
                     Gadget::LapLog => {
                         super::lap_log_style::paint(&painter, geometry.rect, &snapshot.lap_log)
                     }
@@ -216,6 +214,7 @@ impl OverlaySession {
         Self {
             config,
             show,
+            hidden_gadgets: BTreeSet::new(),
             error: None,
             outputs: Vec::new(),
             ready: false,
@@ -289,6 +288,7 @@ impl OverlaySession {
             super::fuel_style::SIZE,
             super::lap_records_style::SIZE,
             super::lap_log_style::SIZE,
+            super::relative_style::SIZE,
         ];
         let enabled_flags = [
             self.config.radar_enabled,
@@ -299,6 +299,7 @@ impl OverlaySession {
             self.config.fuel.enabled,
             self.config.lap_records.enabled,
             self.config.lap_log.enabled,
+            self.config.relative.enabled,
         ];
         let mut gadgets = Vec::new();
         if available {
@@ -311,6 +312,7 @@ impl OverlaySession {
                 Gadget::Fuel,
                 Gadget::LapRecords,
                 Gadget::LapLog,
+                Gadget::Relative,
             ]
             .into_iter()
             .enumerate()
@@ -340,6 +342,7 @@ impl OverlaySession {
                     ),
                     Gadget::Fuel => Vec2::new(24.0, logical_size.y - size.y - 24.0),
                     Gadget::LapRecords => Vec2::new(logical_size.x - size.x - 24.0, 24.0),
+                    Gadget::Relative => Vec2::new(24.0, (logical_size.y - size.y) / 2.0),
                     Gadget::LapLog => Vec2::new(
                         logical_size.x - size.x - 24.0,
                         24.0 + sizes[6].y * self.config.wayland.lap_records.scale + 8.0,
@@ -363,14 +366,9 @@ impl OverlaySession {
                 });
             }
         }
-        let enabled = self.config.radar_enabled
-            || self.config.gap_ahead.enabled
-            || self.config.gap_behind.enabled
-            || self.config.performance_delta.enabled
-            || self.config.speed_dashboard.enabled
-            || self.config.fuel.enabled
-            || self.config.lap_records.enabled
-            || self.config.lap_log.enabled;
+        let enabled = gadgets
+            .iter()
+            .any(|g| g.enabled && !self.hidden_gadgets.contains(&g.gadget));
         OverlayStatus {
             ready: self.ready && available && self.error.is_none(),
             selected_monitor: selected,

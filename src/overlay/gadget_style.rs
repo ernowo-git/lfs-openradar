@@ -7,7 +7,6 @@ pub(super) const DASHBOARD_BACKGROUND: Color32 =
 
 #[derive(Clone, Copy)]
 pub(super) enum TextFont {
-    Proportional,
     Body,
     Numeric,
 }
@@ -59,11 +58,3 @@ pub(super) struct TimingCellStyle {
     pub losing_text: Color32,
     pub corner_radius: f32,
 }
-
-pub(super) const PANEL: PanelStyle = PanelStyle {
-    size: Vec2::new(230.0, 76.0),
-    background: Color32::from_rgba_unmultiplied_const(12, 18, 28, 210),
-    border_color: Color32::WHITE,
-    border_width: 0.0,
-    corner_radius: 6.0,
-};

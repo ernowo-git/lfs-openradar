@@ -1,7 +1,7 @@
 //! Estimated race-order gaps from common path-node passage times.
 //! Arrival timestamps are approximate; MCI has no physics timestamp.
 use crate::lfs::insim::{Car, Player, TrackInfo};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const HISTORY_MS: u64 = 30_000;
 const MAX_SAMPLES: usize = 3_100; // Also bounded at the minimum 10 ms interval.
@@ -95,6 +95,11 @@ impl GapEngine {
             }
             if car.node >= track.nodes || car.info & (4 | 8) != 0 {
                 *history = History::default();
+                if car.node < track.nodes && car.info & 8 == 0 {
+                    history.latest = Some((car.clone(), time));
+                    history.present = true;
+                    history.unreliable = true;
+                }
                 continue;
             }
             let progress = progress_of(car, track);
@@ -132,6 +137,126 @@ impl GapEngine {
             }
         }
     }
+    pub fn current_lap(&self, plid: u8) -> Option<u16> {
+        self.histories.get(&plid)?.latest.as_ref()?.0.lap.into()
+    }
+
+    /// Select each driver once by the shortest signed track-path separation.
+    pub fn on_track(
+        &self,
+        selected: Option<u8>,
+        players: &BTreeMap<u8, Player>,
+        pit: &BTreeSet<u8>,
+        now: u64,
+        stale_ms: u64,
+    ) -> [Option<crate::relative::RelativeRow>; 7] {
+        let mut rows = std::array::from_fn(|_| None);
+        let Some(track) = self.track.as_ref().filter(|t| t.supports_gaps()) else {
+            return rows;
+        };
+        let Some(local) = selected.and_then(|id| self.histories.get(&id)) else {
+            return rows;
+        };
+        let Some((me, at)) = &local.latest else {
+            return rows;
+        };
+        if !local.present
+            || (local.unreliable && !pit.contains(&me.plid))
+            || now.saturating_sub(*at) > stale_ms
+        {
+            return rows;
+        }
+        let Some(player) = players.get(&me.plid).filter(|p| !p.in_garage) else {
+            return rows;
+        };
+        rows[3] = Some(crate::relative::RelativeRow {
+            plid: me.plid,
+            position: (me.position > 0).then_some(me.position),
+            name: player.name.clone(),
+            seconds: Some(0.0),
+            pit: pit.contains(&me.plid),
+            ..Default::default()
+        });
+        let nodes = i64::from(track.nodes);
+        let mut candidates = Vec::new();
+        for history in self.histories.values().filter(|h| h.present) {
+            let Some((car, at)) = &history.latest else {
+                continue;
+            };
+            if car.plid == me.plid
+                || now.saturating_sub(*at) > stale_ms
+                || car.info & 8 != 0
+                || (car.info & 4 != 0 && !pit.contains(&car.plid))
+            {
+                continue;
+            }
+            let Some(player) = players.get(&car.plid).filter(|p| !p.in_garage) else {
+                continue;
+            };
+            let raw = progress_of(car, track) - progress_of(me, track);
+            let forward = raw.rem_euclid(nodes);
+            let signed = if forward * 2 > nodes {
+                forward - nodes
+            } else {
+                forward
+            };
+            let (leader, trailer, separation) = if signed >= 0 {
+                (history, local, signed)
+            } else {
+                (local, history, -signed)
+            };
+            let seconds = if local.unreliable
+                || history.unreliable
+                || pit.contains(&me.plid)
+                || pit.contains(&car.plid)
+            {
+                None
+            } else {
+                trailer
+                    .passages
+                    .back()
+                    .filter(|p| now.saturating_sub(p.time) <= MAX_POINT_AGE_MS)
+                    .and_then(|point| {
+                        let leader_progress = progress_of(&leader.latest.as_ref()?.0, track);
+                        let trailer_progress = progress_of(&trailer.latest.as_ref()?.0, track);
+                        let expected =
+                            leader_progress - separation - (trailer_progress - point.progress);
+                        leader
+                            .passages
+                            .iter()
+                            .rev()
+                            .find(|p| p.progress == expected && p.time <= point.time)
+                            .map(|crossing| (point.time - crossing.time) as f64 / 1000.0)
+                    })
+            };
+            candidates.push((
+                signed,
+                crate::relative::RelativeRow {
+                    plid: car.plid,
+                    position: (car.position > 0).then_some(car.position),
+                    name: player.name.clone(),
+                    seconds,
+                    lap_difference: ((raw - signed) / nodes) as i32,
+                    pit: pit.contains(&car.plid),
+                    fastest: false,
+                },
+            ));
+        }
+        candidates.sort_by_key(|(distance, row)| (distance.abs(), row.plid));
+        let mut ahead = 0;
+        let mut behind = 0;
+        for (distance, row) in candidates {
+            if distance >= 0 && ahead < 3 {
+                rows[2 - ahead] = Some(row);
+                ahead += 1;
+            } else if distance < 0 && behind < 3 {
+                rows[4 + behind] = Some(row);
+                behind += 1;
+            }
+        }
+        rows
+    }
+
     pub fn frame(
         &self,
         selected: Option<u8>,

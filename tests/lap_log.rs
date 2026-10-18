@@ -8,6 +8,7 @@ use lfs_openradar::{
 
 fn state(track: &str, flags: u16) -> Packet {
     Packet::State(State {
+        session: Default::default(),
         track: track.into(),
         flags,
         camera: 3,

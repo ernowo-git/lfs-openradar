@@ -10,14 +10,14 @@ OpenRadar displays driving information from Live for Speed through independently
 OpenRadar's collection of driving-information gadgets displayed over the game.
 
 **Gadget**:
-One independently positioned and scaled HUD element: Radar, Gap Ahead, Gap Behind, Performance Delta, Speed dashboard, Fuel, Lap records, or Lap-time log.
+One independently positioned and scaled HUD element: Radar, Gap Ahead, Gap Behind, Performance Delta, Speed dashboard, Fuel, Lap records, Lap-time log, or Relative.
 
 **HUD style**:
-The selected visual appearance of the gadgets, currently Classic or GT.
+The visual appearance of the gadgets, currently GT.
 _Avoid_: HUD layout when referring only to appearance.
 
 **GT style**:
-The existing GT-inspired appearance of Radar, Gap Ahead, Gap Behind, and Performance Delta. Speed dashboard and Fuel retain their own appearance in either HUD style.
+The existing GT-inspired appearance of Radar, Gap Ahead, Gap Behind, and Performance Delta. Speed dashboard, Fuel, Lap records, Lap-time log, and Relative use their own GT presentation.
 _Avoid_: GT layout when referring only to appearance.
 
 **HUD layout**:
@@ -102,3 +102,23 @@ change, or application exit.
 **Previous-lap delta**:
 A completed lap's time minus the preceding recorded lap's time. Negative is
 faster; positive is slower. A timing interruption leaves the next delta unavailable.
+
+### Relative traffic
+
+**Relative gadget**:
+The selected driver's centred traffic list, with up to three drivers ahead and
+three behind on the track, independent of their race positions.
+
+**On-track gap**:
+An estimated time separation between nearby cars at a common track-path point.
+_Avoid_: Official timing gap when referring to this estimate.
+
+**Lap-difference marker**:
+A race-progress difference after accounting for the cars' nearby on-track
+positions. `+1L` identifies traffic one lap ahead in race progress and `−1L`
+identifies traffic one lap behind. Merely crossing the finish line before a
+nearby car does not imply a full lap difference.
+
+**Projected total laps**:
+The estimated distance, in laps, that the race leader will have completed when
+the timed-race duration expires. It is not an official finishing lap count.

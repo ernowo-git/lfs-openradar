@@ -23,6 +23,39 @@ pub struct Sample {
     pub available: u32,
     pub lights: u32,
 }
+
+#[derive(Clone, Debug)]
+pub struct Telemetry {
+    pub sample: Sample,
+    pub flags: u16,
+    pub turbo_bar: f32,
+    pub engine_temp_c: f32,
+    pub oil_pressure_bar: f32,
+    pub oil_temp_c: f32,
+    pub throttle: f32,
+    pub brake: f32,
+    pub clutch: f32,
+    pub display1: [u8; 16],
+    pub display2: [u8; 16],
+}
+
+pub fn decode_telemetry(p: &[u8], id: i32) -> Result<Telemetry, String> {
+    let sample = decode(p, id)?;
+    let f = |at| f32::from_le_bytes(p[at..at + 4].try_into().unwrap());
+    Ok(Telemetry {
+        sample,
+        flags: u16::from_le_bytes(p[8..10].try_into().unwrap()),
+        turbo_bar: f(20),
+        engine_temp_c: f(24),
+        oil_pressure_bar: f(32),
+        oil_temp_c: f(36),
+        throttle: f(48),
+        brake: f(52),
+        clutch: f(56),
+        display1: p[60..76].try_into().unwrap(),
+        display2: p[76..92].try_into().unwrap(),
+    })
+}
 impl Sample {
     pub fn lamp(&self, mask: u32) -> Option<bool> {
         (self.available & mask != 0).then_some(self.lights & mask != 0)
@@ -64,6 +97,12 @@ pub fn decode(p: &[u8], id: i32) -> Result<Sample, String> {
     let fuel = read_float(28);
     if !(0.0..=1.0).contains(&fuel) {
         return Err("outgauge fuel must be between zero and one".into());
+    }
+    if [48, 52, 56]
+        .iter()
+        .any(|at| !(0.0..=1.0).contains(&read_float(*at)))
+    {
+        return Err("outgauge pedals must be between zero and one".into());
     }
     if speed_mps < 0.0 || rpm < 0.0 || p[10] > 31 {
         return Err("OutGauge contains invalid speed, RPM, or gear".into());

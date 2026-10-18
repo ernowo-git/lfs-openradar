@@ -1,7 +1,8 @@
 //! Native Wayland presentation, owned separately from the XWayland panel.
-use super::session::{OverlaySession, OverlayStatus, SnapshotSource};
+use super::session::{Gadget, OverlaySession, OverlayStatus, SnapshotSource};
 use crate::config::Config;
 use smithay_client_toolkit::reexports::calloop::ping::{Ping, make_ping};
+use std::collections::BTreeSet;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -106,8 +107,18 @@ impl NativeOverlay {
             }
         }));
     }
-    pub fn update(&self, config: Config, show: bool, source: SnapshotSource) {
-        self.session.lock().unwrap().update(config, show);
+    pub fn update(
+        &self,
+        config: Config,
+        show: bool,
+        source: SnapshotSource,
+        hidden_gadgets: &BTreeSet<Gadget>,
+    ) {
+        {
+            let mut session = self.session.lock().unwrap();
+            session.update(config, show);
+            session.hidden_gadgets.clone_from(hidden_gadgets);
+        }
         *self.source.lock().unwrap() = source;
         if let Some(ping) = &self.ping {
             ping.ping();

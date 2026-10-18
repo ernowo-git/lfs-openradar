@@ -2,9 +2,11 @@ mod support;
 use lfs_openradar::{
     config::{Config, GapSettings},
     lfs::outgauge,
+    overlay::Gadget,
     runtime::Runtime,
 };
 use std::{
+    collections::BTreeSet,
     io::{Read, Write},
     net::{TcpListener, UdpSocket},
     sync::{
@@ -15,6 +17,190 @@ use std::{
     time::{Duration, Instant},
 };
 use support::*;
+
+#[test]
+fn local_hud_commands_preserve_visibility_order_and_active_recording() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let config = Config {
+        insim_address: listener.local_addr().unwrap(),
+        outsim_bind: udp.local_addr().unwrap(),
+        outgauge_bind: udp.local_addr().unwrap(),
+        ..Default::default()
+    };
+    drop(udp);
+    let destination = config.outsim_bind;
+    let mut runtime = Runtime::start(config).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut tcp = loop {
+        match listener.accept() {
+            Ok((tcp, _)) => break tcp,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "no InSim connection");
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(e) => panic!("{e}"),
+        }
+    };
+    // Windows may inherit the listener's nonblocking mode. This handshake and
+    // command exchange use blocking reads with a bounded timeout.
+    tcp.set_nonblocking(false).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    tcp.read_exact(&mut [0; 44]).unwrap();
+    let mut version = packet(2, 20);
+    version[18] = 9;
+    tcp.write_all(&version).unwrap();
+    let mut exchange = |user_type, commands: &[&str]| {
+        for command in commands {
+            let mut message = packet(11, (9 + command.len()).next_multiple_of(4));
+            message[6] = user_type;
+            message[8..8 + command.len()].copy_from_slice(command.as_bytes());
+            tcp.write_all(&message).unwrap();
+        }
+        // The echoed keepalive proves the preceding messages were processed.
+        tcp.write_all(&[1, 3, 0, 0]).unwrap();
+        let mut reply = [0; 4];
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            tcp.read_exact(&mut reply).unwrap();
+            if reply == [1, 3, 0, 0] {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no keepalive reply");
+        }
+    };
+    let cases: &[(u8, &[&str], bool, bool)] = &[
+        (3, &["show"], false, true),
+        (3, &["show", "show"], true, true),
+        (3, &[" HIDE "], true, false),
+        (3, &["hide", "hide"], false, false),
+        (1, &["show", "hud"], false, false),
+        (2, &["hide", "hud"], true, true),
+        (3, &["show extra", "hud extra", "unknown"], false, false),
+        (3, &["SHOW"], false, true),
+        (3, &["hud"], false, true),
+        (3, &[" HUD "], true, false),
+        (3, &["hud", "hud"], false, false),
+        (3, &["hud", "hud"], true, true),
+        (3, &["hud", "hud", "hud"], false, true),
+        (3, &["show", "hud"], false, false),
+        (3, &["hide", "hud"], true, true),
+        (3, &["hud", "show"], true, true),
+        (3, &["hud", "hide"], false, false),
+    ];
+    for &(user_type, commands, initial, expected) in cases {
+        exchange(user_type, commands);
+        let mut hidden = BTreeSet::from([Gadget::Relative]);
+        assert_eq!(
+            runtime.apply_overlay_visibility(initial, &mut hidden),
+            expected,
+            "{commands:?}"
+        );
+        // A manual change after consumption must survive the next poll.
+        assert_eq!(
+            runtime.apply_overlay_visibility(!expected, &mut hidden),
+            !expected
+        );
+        assert_eq!(hidden, BTreeSet::from([Gadget::Relative]));
+    }
+    for (name, gadget) in [
+        ("radar", Gadget::Radar),
+        ("ahead", Gadget::Ahead),
+        ("behind", Gadget::Behind),
+        ("delta", Gadget::Delta),
+        ("speed", Gadget::Dashboard),
+        ("fuel", Gadget::Fuel),
+        ("lap-records", Gadget::LapRecords),
+        ("lap-log", Gadget::LapLog),
+        ("relative", Gadget::Relative),
+    ] {
+        let command = format!(" HuD\t{} ", name.to_ascii_uppercase());
+        let mut hidden = BTreeSet::new();
+        exchange(3, &[&command]);
+        assert!(!runtime.apply_overlay_visibility(false, &mut hidden));
+        assert_eq!(hidden, BTreeSet::from([gadget]));
+        // Two additional toggles preserve the hidden state before a UI poll.
+        exchange(3, &[&command, &command]);
+        assert!(runtime.apply_overlay_visibility(true, &mut hidden));
+        assert_eq!(hidden, BTreeSet::from([gadget]));
+        exchange(3, &[&command]);
+        assert!(runtime.apply_overlay_visibility(true, &mut hidden));
+        assert!(hidden.is_empty());
+    }
+    let mut hidden = BTreeSet::new();
+    for user_type in [0, 1, 2] {
+        exchange(user_type, &["hud radar"]);
+        assert!(runtime.apply_overlay_visibility(true, &mut hidden));
+        assert!(hidden.is_empty());
+    }
+    exchange(
+        3,
+        &["show radar", "hide radar", "hud radar extra", "hud unknown"],
+    );
+    assert!(runtime.apply_overlay_visibility(true, &mut hidden));
+    assert!(hidden.is_empty());
+    exchange(
+        3,
+        &["hud radar", "hide", "hud relative", "hud radar", "show"],
+    );
+    assert!(runtime.apply_overlay_visibility(false, &mut hidden));
+    assert_eq!(hidden, BTreeSet::from([Gadget::Relative]));
+    // Manual restoration is retained after pending commands have been consumed.
+    hidden.clear();
+    assert!(runtime.apply_overlay_visibility(true, &mut hidden));
+    assert!(hidden.is_empty());
+
+    // Telemetry keeps reaching the recording while both master and gadget HUDs are hidden.
+    let directory = std::env::temp_dir().join(format!(
+        "openradar-hud-recording-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    runtime
+        .start_recording(lfs_openradar::recording::Options {
+            directory: directory.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sender
+        .send_to(&full_outsim(10, 0.0, 0.0, 0.0), destination)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while runtime.recording_status().unwrap().packets[0] < 1 {
+        assert!(Instant::now() < deadline, "first recording packet missing");
+        thread::sleep(Duration::from_millis(5));
+    }
+    exchange(3, &["hud radar", "hud speed", "hud fuel", "hide"]);
+    assert!(!runtime.apply_overlay_visibility(true, &mut hidden));
+    assert_eq!(
+        hidden,
+        BTreeSet::from([Gadget::Radar, Gadget::Dashboard, Gadget::Fuel])
+    );
+    sender
+        .send_to(&full_outsim(20, 0.0, 0.0, 0.0), destination)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while runtime.recording_status().unwrap().packets[0] < 2
+        || runtime.snapshot().outsim_samples < 2
+    {
+        assert!(
+            Instant::now() < deadline,
+            "hidden HUD interrupted recording"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(runtime.recording_open());
+    assert!(runtime.snapshot().outsim_samples >= 2);
+    let recorded = runtime.stop_recording().unwrap();
+    assert_eq!(recorded.packets[0], 2);
+    assert!(recorded.error.is_none());
+    std::fs::remove_dir_all(directory).unwrap();
+}
 
 #[test]
 fn mock_lfs_tcp_udp_connects_and_missing_outsim_pauses() {
@@ -190,11 +376,13 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
         version[4..8].copy_from_slice(b"0.7G");
         version[18] = protocol;
         tcp.write_all(&version).unwrap();
-        let mut requests = [0; 16];
+        let mut requests = [0; 24];
         tcp.read_exact(&mut requests).unwrap();
         assert_eq!(
             &requests,
-            &[1, 3, 1, 13, 1, 3, 1, 14, 1, 3, 1, 7, 1, 3, 1, 19]
+            &[
+                1, 3, 1, 13, 1, 3, 1, 14, 1, 3, 1, 7, 1, 3, 1, 19, 1, 3, 1, 15, 1, 3, 1, 8
+            ]
         );
         for (id, kind) in [(1, 0), (2, if follow { 2 } else { 6 })] {
             let mut npl = packet(21, 76);
@@ -212,6 +400,8 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
         state[8] = 1;
         state[10] = 3;
         state[11] = if follow { 2 } else { 1 };
+        state[15] = 1;
+        state[17] = 10;
         state[20..23].copy_from_slice(b"BL1");
         tcp.write_all(&state).unwrap();
         let mut track = packet(17, 28);
@@ -221,6 +411,10 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
         track[8..11].copy_from_slice(b"BL1");
         track[18..20].copy_from_slice(&1000_u16.to_le_bytes());
         tcp.write_all(&track).unwrap();
+        let mut clock = packet(4, 8);
+        clock[3] = 6;
+        clock[4..8].copy_from_slice(&2000_u32.to_le_bytes());
+        tcp.write_all(&clock).unwrap();
         let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut time = 20;
         let mut framer = lfs_openradar::lfs::insim::Framer::default();
@@ -264,10 +458,14 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
                 gauge[92..96].copy_from_slice(&gauge_id.to_le_bytes());
                 udp.send_to(&gauge, gauge_destination).unwrap();
             }
-            if protocol == 10
-                && let Ok(size) = tcp.read(&mut incoming)
-            {
+            if let Ok(size) = tcp.read(&mut incoming) {
                 for request in framer.push(&incoming[..size]).unwrap() {
+                    if request[1] == 3 && request[3] == 8 {
+                        let mut clock = packet(4, 8);
+                        clock[3] = 6;
+                        clock[4..8].copy_from_slice(&2000_u32.to_le_bytes());
+                        tcp.write_all(&clock).unwrap();
+                    }
                     if request[1] == 3 && request[3] == 30 {
                         assert!(
                             !follow,
@@ -302,6 +500,14 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     }
     let live = overlay_reader.snapshot();
     assert!(live.frame.live, "{live:?}");
+    assert!(live.relative.rows[3].is_some());
+    assert_eq!(live.relative.session, "RACE");
+    assert_eq!(live.relative.total_laps, Some(10));
+    assert!(
+        live.relative
+            .elapsed_ms
+            .is_some_and(|ms| (20_000..25_000).contains(&ms))
+    );
     let dashboard = live
         .dashboard
         .sample
@@ -345,6 +551,10 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     thread::sleep(Duration::from_millis(350));
     let paused = overlay_reader.snapshot();
     assert!(paused.connected);
+    assert!(
+        paused.relative.rows[3].is_some(),
+        "relative does not depend on OutSim"
+    );
     assert!(!paused.frame.live);
     assert!(paused.frame.status.contains("stale"));
     assert!(
