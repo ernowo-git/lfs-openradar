@@ -1,13 +1,7 @@
 //! Radar car appearance. Keep drawing and telemetry logic out of this module.
 
-use super::gadget_style::{PanelStyle, TextFont, TextStyle};
-use eframe::egui::{Align2, Color32, Stroke, Vec2};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum MarkerShape {
-    Car,
-    Arrow,
-}
+use super::gadget_style::{PanelStyle, TextStyle};
+use eframe::egui::{Color32, Vec2};
 
 pub(super) struct RadialBackgroundStyle {
     pub center_color: Color32,
@@ -57,7 +51,6 @@ pub(super) struct RadarStyle {
     pub alongside: &'static RadarCarStyle,
     pub potential_contact: &'static RadarCarStyle,
     pub uncertain: &'static RadarCarStyle,
-    pub marker: MarkerShape,
     pub fill_brightness: f32,
     pub panel: PanelStyle,
     pub grid_color: Color32,
@@ -77,81 +70,3 @@ pub(super) struct RadarCarStyle {
     /// Zero disables the border; rendering clamps it to fit the car body.
     pub border_width: f32,
 }
-
-const BORDER_COLOR: Color32 = Color32::from_rgb(255, 255, 255);
-const BORDER_WIDTH: f32 = 1.5;
-/// Retain the radar's existing shading of the base fill colors.
-pub(super) const FILL_BRIGHTNESS: f32 = 0.85;
-
-pub(super) const PLAYER: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(95, 231, 202),
-    border_color: BORDER_COLOR,
-    border_width: BORDER_WIDTH,
-};
-
-pub(super) const NEARBY: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(121, 185, 235),
-    ..PLAYER
-};
-
-pub(super) const ALONGSIDE: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(252, 193, 94),
-    ..PLAYER
-};
-
-pub(super) const POTENTIAL_CONTACT: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(255, 99, 99),
-    border_color: Color32::WHITE,
-    border_width: 2.0,
-};
-
-pub(super) const UNCERTAIN: RadarCarStyle = RadarCarStyle {
-    fill: Color32::from_rgb(109, 123, 142),
-    ..PLAYER
-};
-
-pub(super) const CLASSIC: RadarStyle = RadarStyle {
-    player: &PLAYER,
-    nearby: &NEARBY,
-    alongside: &ALONGSIDE,
-    potential_contact: &POTENTIAL_CONTACT,
-    uncertain: &UNCERTAIN,
-    marker: MarkerShape::Car,
-    fill_brightness: FILL_BRIGHTNESS,
-    panel: PanelStyle {
-        size: Vec2::new(320.0, 320.0),
-        background: Color32::from_rgba_unmultiplied_const(13, 23, 35, 225),
-        corner_radius: 16.0,
-        border_color: Color32::WHITE,
-        border_width: 0.0,
-    },
-    grid_color: Color32::from_rgb(37, 57, 74),
-    grid_width: 1.0,
-    center_band: Color32::TRANSPARENT,
-    proximity: None,
-    heading: None,
-    player_label: Some(TextStyle {
-        color: Color32::from_rgb(9, 32, 34),
-        font_size: 9.0,
-        offset: Vec2::ZERO,
-        align: Align2::CENTER_CENTER,
-        font: TextFont::Proportional,
-        outline: Stroke::NONE,
-    }),
-    paused: TextStyle {
-        color: Color32::from_rgb(160, 177, 192),
-        font_size: 14.0,
-        offset: Vec2::ZERO,
-        align: Align2::CENTER_CENTER,
-        font: TextFont::Proportional,
-        outline: Stroke::NONE,
-    },
-    hint: TextStyle {
-        color: Color32::from_rgb(119, 146, 163),
-        font_size: 10.0,
-        offset: Vec2::new(0.0, -10.0),
-        align: Align2::CENTER_BOTTOM,
-        font: TextFont::Proportional,
-        outline: Stroke::NONE,
-    },
-};

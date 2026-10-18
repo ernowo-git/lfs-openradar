@@ -6,9 +6,11 @@ use crate::{
         insim::{self, Framer, Packet},
         outgauge, outsim,
     },
+    overlay::Gadget,
     radar::{Engine, RadarFrame},
 };
 use std::{
+    collections::BTreeSet,
     io::{Read, Write},
     net::{TcpStream, UdpSocket},
     sync::{
@@ -30,6 +32,7 @@ pub struct Snapshot {
     pub fuel: crate::fuel::FuelFrame,
     pub lap_records: crate::lap_records::LapRecordsFrame,
     pub lap_log: crate::lap_log::LapLogFrame,
+    pub relative: crate::relative::RelativeFrame,
     pub lap_records_error: Option<String>,
     pub outgauge_error: Option<String>,
     pub outgauge_forward_error: Option<String>,
@@ -56,6 +59,45 @@ enum VisibilityCommand {
     Toggle,
 }
 
+#[derive(Default)]
+struct PendingVisibility {
+    master: Option<VisibilityCommand>,
+    gadget_toggles: BTreeSet<Gadget>,
+}
+
+impl PendingVisibility {
+    fn receive(&mut self, command: &str) {
+        use VisibilityCommand::{Set, Toggle};
+        let mut words = command.split_ascii_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some(command), None, None) => {
+                let request = if command.eq_ignore_ascii_case("show") {
+                    Set(true)
+                } else if command.eq_ignore_ascii_case("hide") {
+                    Set(false)
+                } else if command.eq_ignore_ascii_case("hud") {
+                    Toggle
+                } else {
+                    return;
+                };
+                self.master = match (request, self.master) {
+                    (Toggle, Some(Set(value))) => Some(Set(!value)),
+                    (Toggle, Some(Toggle)) => None,
+                    _ => Some(request),
+                };
+            }
+            (Some(command), Some(name), None) if command.eq_ignore_ascii_case("hud") => {
+                if let Some(gadget) = Gadget::from_command_name(name)
+                    && !self.gadget_toggles.remove(&gadget)
+                {
+                    self.gadget_toggles.insert(gadget);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub struct Runtime {
     latest: Arc<Mutex<Snapshot>>,
     stop: Arc<AtomicBool>,
@@ -64,7 +106,7 @@ pub struct Runtime {
     recording_sink: Arc<Mutex<Option<crate::recording::Sink>>>,
     recorder: Option<crate::recording::Recorder>,
     last_recording: Option<crate::recording::Status>,
-    overlay_visibility: Arc<Mutex<Option<VisibilityCommand>>>,
+    overlay_visibility: Arc<Mutex<PendingVisibility>>,
 }
 
 impl Runtime {
@@ -112,7 +154,7 @@ impl Runtime {
         let saved_config = config.clone();
         let output = latest.clone();
         let quit = stop.clone();
-        let overlay_visibility = Arc::new(Mutex::new(None));
+        let overlay_visibility = Arc::new(Mutex::new(PendingVisibility::default()));
         let worker_visibility = overlay_visibility.clone();
         let worker = thread::Builder::new()
             .name("lfs-telemetry".into())
@@ -183,10 +225,16 @@ impl Runtime {
     pub fn snapshot_reader(&self) -> SnapshotReader {
         SnapshotReader(self.latest.clone())
     }
-    /// Apply pending `/o show`, `/o hide`, and `/o hud` requests once to the
+    /// Apply pending `/o show`, `/o hide`, `/o hud`, and `/o hud <gadget>` requests once to the
     /// panel's current visibility. Multiple requests retain their combined effect.
-    pub fn apply_overlay_visibility(&self, visible: bool) -> bool {
-        match self.overlay_visibility.lock().unwrap().take() {
+    pub fn apply_overlay_visibility(&self, visible: bool, hidden: &mut BTreeSet<Gadget>) -> bool {
+        let pending = std::mem::take(&mut *self.overlay_visibility.lock().unwrap());
+        for gadget in pending.gadget_toggles {
+            if !hidden.remove(&gadget) {
+                hidden.insert(gadget);
+            }
+        }
+        match pending.master {
             Some(VisibilityCommand::Set(value)) => value,
             Some(VisibilityCommand::Toggle) => !visible,
             None => visible,
@@ -205,7 +253,7 @@ impl Drop for Runtime {
 }
 
 fn request_roster(stream: &mut TcpStream) -> std::io::Result<()> {
-    for subtype in [13, 14, 7, 19] {
+    for subtype in [13, 14, 7, 19, 15, 8] {
         stream.write_all(&insim::tiny(subtype, 1))?;
     }
     Ok(())
@@ -265,7 +313,7 @@ fn run(
     store: Option<crate::config::SharedConfigStore>,
     lap_log: crate::lap_log::SharedLapLog,
     recording: Arc<Mutex<Option<crate::recording::Sink>>>,
-    overlay_visibility: Arc<Mutex<Option<VisibilityCommand>>>,
+    overlay_visibility: Arc<Mutex<PendingVisibility>>,
 ) {
     let start = Instant::now();
     let mut engine = Engine::new(config.follow_viewed_car);
@@ -292,6 +340,7 @@ fn run(
     let mut light_request = 0_u8;
     let mut pending_light_request: Option<(u8, u8, String, u64)> = None;
     let mut lights_requested_at = 0;
+    let mut clock_requested_at = 0;
     let mut tcp_buffer = [0; 4096];
     let mut udp_buffer = [0; 1024];
     let expected_size =
@@ -439,26 +488,7 @@ fn run(
                                         }
                                     }
                                     Ok(Packet::LocalCommand(command)) if protocol_ready => {
-                                        use VisibilityCommand::{Set, Toggle};
-                                        let command = command.trim();
-                                        let request = if command.eq_ignore_ascii_case("show") {
-                                            Some(Set(true))
-                                        } else if command.eq_ignore_ascii_case("hide") {
-                                            Some(Set(false))
-                                        } else if command.eq_ignore_ascii_case("hud") {
-                                            Some(Toggle)
-                                        } else {
-                                            None
-                                        };
-                                        if let Some(request) = request {
-                                            let mut pending = overlay_visibility.lock().unwrap();
-                                            // Collapse the ordered commands without losing toggle parity.
-                                            *pending = match (request, *pending) {
-                                                (Toggle, Some(Set(value))) => Some(Set(!value)),
-                                                (Toggle, Some(Toggle)) => None,
-                                                _ => Some(request),
-                                            };
-                                        }
+                                        overlay_visibility.lock().unwrap().receive(&command);
                                     }
                                     Ok(Packet::Tiny(0)) => {
                                         if let Err(error) = stream.write_all(&insim::tiny(0, 0)) {
@@ -522,6 +552,15 @@ fn run(
                             | std::io::ErrorKind::Interrupted
                     ) => {}
                 Err(error) => disconnected = Some(error.to_string()),
+            }
+            if protocol_ready
+                && disconnected.is_none()
+                && now.saturating_sub(clock_requested_at) >= 1000
+            {
+                if let Err(error) = stream.write_all(&insim::tiny(8, 1)) {
+                    disconnected = Some(error.to_string());
+                }
+                clock_requested_at = now;
             }
             // OutGauge reports dashboard symbols, which may omit low beam on stock cars.
             // TINY_LCL reads the local human's actual light switch (InSim 10+).
@@ -676,6 +715,7 @@ fn run(
         }
         stats.lap_records = engine.lap_records.frame();
         stats.lap_log = engine.lap_records.lap_log.lock().unwrap().frame();
+        stats.relative = engine.relative(render_now, &config);
         stats.connected = protocol_ready;
         stats.frame = engine.frame(render_now, &config);
         stats.gaps = engine.gaps(render_now, &config, &stats.frame);

@@ -217,6 +217,7 @@ fn timing_pipeline() -> lfs_openradar::radar::Engine {
                     kind: if id == 1 { 0 } else { 6 },
                     name: format!("Driver {id}"),
                     model: "XRG".into(),
+                    in_pits: false,
                     abs_enabled: false,
                     in_garage: false,
                 }),
@@ -227,6 +228,7 @@ fn timing_pipeline() -> lfs_openradar::radar::Engine {
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 1,
                 camera: 3,
                 viewed: 1,
@@ -287,6 +289,7 @@ fn opponent_events_and_roster_replies_preserve_local_delta_and_neighbor_gaps() {
             kind: 0,
             name: "Driver 1".into(),
             model: "XRG".into(),
+            in_pits: false,
             abs_enabled: false,
             in_garage: false,
         }),
@@ -548,6 +551,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
                 kind: 0,
                 name: "Driver".into(),
                 model: "XRG".into(),
+                in_pits: false,
                 abs_enabled: false,
                 in_garage: false,
             }),
@@ -557,6 +561,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 1,
                 camera: 3,
                 viewed: 1,
@@ -617,6 +622,7 @@ fn engine_publishes_delta_only_with_associated_outsim_and_resets_session() {
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 5,
                 camera: 3,
                 viewed: 1,
@@ -653,6 +659,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
                 kind: 0,
                 name: "Driver".into(),
                 model: "XRG".into(),
+                in_pits: false,
                 abs_enabled: false,
                 in_garage: false,
             }),
@@ -662,6 +669,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 1,
                 camera: 3,
                 viewed: 1,
@@ -769,6 +777,7 @@ fn race_pipeline_ignores_split_reports_and_hides_estimate_when_paused() {
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 5,
                 camera: 3,
                 viewed: 1,

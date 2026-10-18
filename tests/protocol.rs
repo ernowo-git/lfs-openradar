@@ -221,6 +221,11 @@ fn local_light_reply_decodes_switch_without_confusing_other_small_packets() {
         );
     }
     bytes[3] = 6;
+    assert!(matches!(
+        insim::decode(&bytes).unwrap(),
+        Packet::RaceTime(_)
+    ));
+    bytes[3] = 7;
     assert!(matches!(insim::decode(&bytes).unwrap(), Packet::Other));
     assert!(insim::decode(&packet(4, 4)).is_err());
 }

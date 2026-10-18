@@ -5,8 +5,7 @@ use super::{
     gadget_style::{CellStyle, PanelStyle, RowRule, TextFont, TextStyle},
     gap_style::GapStyle,
     radar_style::{
-        MarkerShape, ProximityStyle, RadarCarStyle, RadarStyle, RadialBackgroundStyle,
-        SideWarningStyle,
+        ProximityStyle, RadarCarStyle, RadarStyle, RadialBackgroundStyle, SideWarningStyle,
     },
     theme,
 };
@@ -286,7 +285,6 @@ fn paint_gadget_text(
 ) {
     let position = rect.min + style.offset * scale;
     let family = match style.font {
-        TextFont::Proportional => FontFamily::Proportional,
         TextFont::Body => FontFamily::Name(super::fonts::BODY.into()),
         TextFont::Numeric => FontFamily::Name(super::fonts::NUMERIC.into()),
     };
@@ -479,7 +477,7 @@ pub(super) fn paint(
     let size = rect.width().min(rect.height());
     let panel = Rect::from_center_size(rect.center(), Vec2::splat(size - 8.0));
     let painter = &painter.with_clip_rect(panel.intersect(painter.clip_rect()));
-    if draw_background || style.marker == MarkerShape::Arrow {
+    if draw_background || style.proximity.is_some() {
         paint_gadget_panel(painter, panel, 1.0, &style.panel);
     }
     let projection = radar_projection(panel, config, style);
@@ -692,7 +690,7 @@ fn panel_point(panel: Rect, fraction: Vec2) -> Pos2 {
 #[derive(Clone, Copy)]
 struct RadarProjection {
     origin: Pos2,
-    /// Classic uses uniform zoom; GT7 fits each axis to its configured range.
+    /// Fit each axis to its configured GT range.
     metres_to_pixels: Vec2,
     ui_scale: f32,
 }
@@ -704,17 +702,7 @@ impl RadarProjection {
 }
 
 fn radar_projection(panel: Rect, config: &Config, style: &RadarStyle) -> RadarProjection {
-    let Some(proximity) = &style.proximity else {
-        let size = panel.width().min(panel.height()) + 8.0;
-        // Side range controls the zoom of the entire Classic radar. Do not cap
-        // it by front/rear range or stretch the physical car footprints.
-        let scale = (size - 60.0) / (2.0 * config.side_m + config.car_width_m) as f32;
-        return RadarProjection {
-            origin: panel.center() + Vec2::new(0.0, 10.0),
-            metres_to_pixels: Vec2::splat(scale),
-            ui_scale: 1.0,
-        };
-    };
+    let proximity = style.proximity.as_ref().expect("GT radar geometry");
     let ui_scale = panel.width().min(panel.height()) / style.panel.size.x;
     let origin = panel_point(panel, proximity.origin);
     // Reserve symbol room before fitting each axis to its configured range.
@@ -835,72 +823,26 @@ fn draw_car(
     centre: Pos2,
     projection: &RadarProjection,
     angle: f64,
-    config: &Config,
+    _config: &Config,
     style: &RadarCarStyle,
     radar: &RadarStyle,
 ) {
-    let scale = projection.metres_to_pixels.x;
-    let ui_scale = projection.ui_scale;
-    let (sin, cos) = angle.sin_cos();
-    let width = config.car_width_m as f32 * scale;
-    let height = config.car_length_m as f32 * scale;
-    if radar.marker == MarkerShape::Arrow {
-        draw_arrow(
-            painter,
-            centre,
-            radar
-                .proximity
-                .as_ref()
-                .map_or(Vec2::new(width, height), |p| p.marker_size * ui_scale),
-            angle,
-            &RadarCarStyle {
-                border_width: style.border_width * ui_scale,
-                ..*style
-            },
-            radar.fill_brightness,
-        );
-        return;
-    }
-    let border = style.border_width.clamp(0.0, width.min(height) * 0.5);
-    let corners = |width: f32, height: f32| {
-        [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
-            .map(|(x, y)| {
-                let x = x * width;
-                let y = y * height;
-                centre
-                    + Vec2::new(
-                        x * cos as f32 - y * sin as f32,
-                        -(x * sin as f32 + y * cos as f32),
-                    )
-            })
-            .to_vec()
-    };
-    let fill = style.fill.gamma_multiply(radar.fill_brightness);
-    // Two nested polygons keep the border inside the rotated car footprint.
-    painter.add(Shape::convex_polygon(
-        corners(width, height),
-        if border > 0.0 {
-            style.border_color
-        } else {
-            fill
+    draw_arrow(
+        painter,
+        centre,
+        radar
+            .proximity
+            .as_ref()
+            .expect("GT radar geometry")
+            .marker_size
+            * projection.ui_scale,
+        angle,
+        &RadarCarStyle {
+            border_width: style.border_width * projection.ui_scale,
+            ..*style
         },
-        Stroke::NONE,
-    ));
-    let inner_width = width - 2.0 * border;
-    let inner_height = height - 2.0 * border;
-    if border > 0.0 && inner_width > 0.0 && inner_height > 0.0 {
-        painter.add(Shape::convex_polygon(
-            corners(inner_width, inner_height),
-            fill,
-            Stroke::NONE,
-        ));
-    }
-    let nose = centre
-        + Vec2::new(
-            (-sin * config.car_length_m * 0.35) as f32,
-            (-cos * config.car_length_m * 0.35) as f32,
-        ) * scale;
-    painter.circle_filled(nose, 2.0, Color32::WHITE);
+        radar.fill_brightness,
+    );
 }
 
 fn draw_arrow(
@@ -965,7 +907,7 @@ mod tests {
     use crate::config::HudStyle;
 
     #[test]
-    fn side_range_changes_horizontal_positions_throughout_both_theme_ranges() {
+    fn side_range_changes_horizontal_positions_throughout_gt_range() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         let frame = RadarFrame {
@@ -981,7 +923,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        for hud in [HudStyle::Classic, HudStyle::Gt7Inspired] {
+        for hud in [HudStyle::Gt7Inspired] {
             let style = theme::resolve(hud).radar;
             for size in [220.0, 320.0, 800.0] {
                 let mut previous: Option<Vec2> = None;
@@ -1035,94 +977,9 @@ mod tests {
                             offset.x < previous.x,
                             "{hud:?}, size {size}, side {side}: horizontal zoom did not change"
                         );
-                        if hud == HudStyle::Classic {
-                            assert!(offset.y.abs() < previous.y.abs());
-                        } else {
-                            assert!((offset.y - previous.y).abs() < 0.001);
-                        }
+                        assert!((offset.y - previous.y).abs() < 0.001);
                     }
                     previous = Some(offset);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn classic_zoom_keeps_circles_round_and_footprints_proportional() {
-        let ctx = egui::Context::default();
-        let config = Config {
-            hud_style: HudStyle::Classic,
-            ..Default::default()
-        };
-        let radar = theme::resolve(HudStyle::Classic).radar;
-        for side in [0.0, 0.1, 1.0, 3.0, 5.0, 8.0, 9.0, 12.0] {
-            let config = Config {
-                side_m: side,
-                ..config.clone()
-            };
-            let panel = Rect::from_min_size(Pos2::ZERO, Vec2::splat(320.0)).shrink(4.0);
-            let projection = radar_projection(panel, &config, radar);
-            let scale = projection.metres_to_pixels;
-            assert_eq!(scale.x, scale.y);
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                paint(
-                    &ctx.layer_painter(egui::LayerId::background()),
-                    panel.expand(4.0),
-                    &RadarFrame {
-                        live: true,
-                        ..Default::default()
-                    },
-                    &config,
-                    true,
-                );
-            });
-            let radii: Vec<_> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    Shape::Circle(circle) if circle.stroke.color == radar.grid_color => {
-                        Some(circle.radius)
-                    }
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(radii, vec![3.0 * scale.x, 6.0 * scale.x, 9.0 * scale.x]);
-            for angle in [0.0, 0.7, std::f64::consts::FRAC_PI_2] {
-                let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw_car(
-                        &ctx.layer_painter(egui::LayerId::background()),
-                        projection.origin,
-                        &projection,
-                        angle,
-                        &config,
-                        radar.player,
-                        radar,
-                    );
-                });
-                let paths: Vec<_> = output
-                    .shapes
-                    .iter()
-                    .filter_map(|shape| match &shape.shape {
-                        Shape::Path(path) => Some(&path.points),
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(paths.len(), 2);
-                let (outer, inner) = (paths[0], paths[1]);
-                let (sin, cos) = angle.sin_cos();
-                for point in outer {
-                    let world = (*point - projection.origin) / scale;
-                    let right = world.x as f64 * cos - world.y as f64 * sin;
-                    let forward = -world.x as f64 * sin - world.y as f64 * cos;
-                    assert!((right.abs() - config.car_width_m * 0.5).abs() < 0.00001);
-                    assert!((forward.abs() - config.car_length_m * 0.5).abs() < 0.00001);
-                }
-                for edge in 0..4 {
-                    let direction = outer[(edge + 1) % 4] - outer[edge];
-                    let inset = inner[edge] - outer[edge];
-                    let distance =
-                        (direction.x * inset.y - direction.y * inset.x).abs() / direction.length();
-                    assert!((distance - radar.player.border_width).abs() < 0.0001);
                 }
             }
         }
@@ -1243,10 +1100,10 @@ mod tests {
     }
 
     #[test]
-    fn gap_diagnostics_follow_debug_toggle_in_both_themes() {
+    fn gt_gap_diagnostics_follow_debug_toggle() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
-        for hud in [HudStyle::Classic, HudStyle::Gt7Inspired] {
+        for hud in [HudStyle::Gt7Inspired] {
             let theme = theme::resolve(hud);
             for debug in [false, true] {
                 for age in [None, Some(100)] {
@@ -1519,10 +1376,10 @@ mod tests {
     }
 
     #[test]
-    fn timing_text_fits_both_themes_at_extreme_scales_with_wide_unicode_names() {
+    fn gt_timing_text_fits_at_extreme_scales_with_wide_unicode_names() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
-        for hud in [HudStyle::Classic, HudStyle::Gt7Inspired] {
+        for hud in [HudStyle::Gt7Inspired] {
             let theme = theme::resolve(hud);
             for scale in [0.5, 1.0, 2.0] {
                 let settings = GapSettings {

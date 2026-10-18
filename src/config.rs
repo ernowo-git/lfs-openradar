@@ -48,22 +48,21 @@ pub struct WaylandSettings {
     pub fuel: GadgetPlacement,
     pub lap_records: GadgetPlacement,
     pub lap_log: GadgetPlacement,
+    pub relative: GadgetPlacement,
 }
 
 /// Built-in overlay appearance, independent of the desktop renderer.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum HudStyle {
-    Classic,
     #[default]
-    #[serde(rename = "gt", alias = "gt7-inspired")]
+    #[serde(rename = "gt", alias = "gt7-inspired", alias = "classic")]
     Gt7Inspired,
 }
 
 impl HudStyle {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Classic => "Classic",
             Self::Gt7Inspired => "GT",
         }
     }
@@ -134,6 +133,7 @@ pub struct Config {
     pub fuel: GapSettings,
     pub lap_records: GapSettings,
     pub lap_log: GapSettings,
+    pub relative: GapSettings,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub track_records: crate::lap_records::Records,
     /// Percentage of the configured RPM limit that starts the red/blue blink.
@@ -158,7 +158,7 @@ pub struct Config {
     pub overlay_y: f32,
     pub overlay_size: f32,
     pub hud_style: HudStyle,
-    /// Show diagnostic status and measurement age in gap gadgets for either HUD style.
+    /// Show diagnostic status and measurement age in gap gadgets.
     pub hud_debug: bool,
     pub hide_when_background: bool,
     /// Key that toggles all overlays; "None" disables the shortcut.
@@ -222,6 +222,7 @@ impl Default for Config {
             fuel: GapSettings::default(),
             lap_records: GapSettings::default(),
             lap_log: GapSettings::default(),
+            relative: GapSettings::default(),
             track_records: BTreeMap::new(),
             rpm_blink_threshold_percent: 95,
             rpm_blink_interval_ms: 100,
@@ -350,6 +351,8 @@ impl Config {
             settings.legacy_x = None;
             settings.legacy_y = None;
         }
+        self.relative.window_x.get_or_insert(24.0);
+        self.relative.window_y.get_or_insert(360.0);
     }
     pub fn validate(&self) -> Result<(), String> {
         for (track, cars) in &self.track_records {
@@ -382,6 +385,7 @@ impl Config {
             &self.wayland.fuel,
             &self.wayland.lap_records,
             &self.wayland.lap_log,
+            &self.wayland.relative,
         ]
         .into_iter()
         .enumerate()
@@ -463,6 +467,7 @@ impl Config {
             &self.fuel,
             &self.lap_records,
             &self.lap_log,
+            &self.relative,
         ] {
             if [settings.window_x, settings.window_y]
                 .iter()

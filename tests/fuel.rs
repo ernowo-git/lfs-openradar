@@ -314,9 +314,11 @@ fn engine_fuel_works_without_outsim_and_preserves_only_the_same_drivers_history(
         name: "You".into(),
         model: "XFG".into(),
         in_garage: false,
+        in_pits: false,
         abs_enabled: true,
     };
     let state = State {
+        session: Default::default(),
         flags: 1,
         camera: 3,
         viewed: 1,
@@ -370,6 +372,7 @@ fn engine_fuel_works_without_outsim_and_preserves_only_the_same_drivers_history(
     engine
         .packet(
             Packet::State(State {
+                session: Default::default(),
                 flags: 5,
                 ..state.clone()
             }),

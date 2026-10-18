@@ -262,6 +262,18 @@ fn run() -> Result<(), String> {
                         eprintln!("outgauge: {error}");
                     }
                 }
+                if config.relative.enabled {
+                    println!(
+                        "Relative: {} | {} elapsed={:?}ms lap={:?} total={:?} projected={:?} rows={:?}",
+                        snapshot.relative.status,
+                        snapshot.relative.session,
+                        snapshot.relative.elapsed_ms,
+                        snapshot.relative.current_lap,
+                        snapshot.relative.total_laps,
+                        snapshot.relative.projected_laps,
+                        snapshot.relative.rows
+                    );
+                }
                 if config.lap_log.enabled {
                     println!(
                         "Lap-time log: best={:?}ms latest={:?}",

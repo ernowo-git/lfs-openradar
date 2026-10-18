@@ -19,8 +19,8 @@ add `--demo`; when running from source, use `cargo run --locked -- --demo`.
    Change `overlay_toggle_key` in your TOML file to use another key.
 3. Enable a gadget's **Position mode**, drag its title bar or adjust X/Y, then
    turn Position mode off to restore the transparent, click-through overlay.
-4. Choose **Classic** or **GT** under **HUD style** in **Gadgets**.
-   Adjust size or scale and click **Save settings** to keep your placement and style.
+4. Adjust size or scale and click **Save settings** to keep your placement.
+   All gadgets use GT styling.
    Use **Apply / reconnect** after changing connection or telemetry settings.
 
 For hands-free debugging, start a single-player AI race, watch an AI in cockpit
@@ -90,15 +90,46 @@ start permits recording the first full lap. Interrupted timing discards the
 pending lap and leaves the next comparison unavailable; session best survives.
 Independent Position mode, X/Y and scale controls work on both overlay backends.
 
+## Relative
+
+Enable **Relative** in Gadgets for three nearby cars ahead, your highlighted
+centre row, and three behind. Empty slots stay empty. Rows use on-track order;
+the position column shows race position or the available practice/qualifying
+ranking. Relative supports live race, qualifying, and practice sessions on
+standard circuit paths. It uses InSim and works without OutSim/OutGauge samples.
+The existing selected-driver and Follow viewed car rules apply.
+
+Gaps are unsigned estimates to one decimal place, calculated from passage times
+at a common track-path point. **EST. GAP** identifies their estimated nature.
+Your row reads `0.0`; unavailable, stale, interrupted, or insufficient passage
+history shows `—`. Cars in the pit lane are dimmed and marked **PIT**, with their
+gaps unavailable. Garage cars are excluded. On-track ordering also needs a
+usable path; unsupported custom/open layouts show an unavailable status.
+
+During races, `+1L` means a nearby car is one lap ahead in race progress; `−1L`
+means one lap behind. These markers are separate from physical proximity and
+are omitted during practice and qualifying. The purple stopwatch marks the
+session's fastest driver only with reliable session coverage. Connecting
+mid-race cannot recover every earlier lap, so the badge stays hidden. A complete
+qualifying result table can restore it. Saved personal lap records are separate.
+
+The footer shows session type, elapsed time, current lap, and available session
+limits. Lap-based races show the configured total. Timed races can show `~`
+projected total laps using the leader's current progress and median of up to five
+recent uninterrupted complete laps; at least two pace samples are required.
+This predicts distance at time expiry, not an official finishing lap. Pit laps,
+resets, missing clocks, and incomplete pace suppress the projection. Native LFS
+timed races use whole hours; arbitrary league durations are not inferred.
+
+Relative has independent Position mode, X/Y, scale, and enablement on both
+overlay backends. **Save settings** remembers these preferences. `--demo` shows
+a synthetic example. Verify live gaps and appearance in LFS before relying on them.
+
 ## HUD styles
 
-Choose **Classic** or **GT** from **HUD style** at the top of the
-**Gadgets** tab. Radar, gaps, and delta change immediately, and their cards preview
-the selected appearance. Speed dashboard and Fuel retain their reference designs
-in either style. Click **Save settings** to remember the selection;
-reconnecting LFS is unnecessary. Positions, scales, enabled gadgets, and
-position mode are retained. GT is the default when no style is saved;
-an explicit Classic selection is retained.
+GT is the sole HUD style. Existing configurations that select Classic load as
+GT without changing gadget positions, scales, or enabled states. The style
+selector has been removed. Speed dashboard and Fuel retain their reference designs.
 
 GT uses transparent backgrounds, boxed driver positions, fading gap
 rows, digital reference-time and signed delta cells, and a larger estimated-lap
@@ -115,8 +146,7 @@ comparison against it. The estimated lap appears beneath the timing cells,
 without a BEST badge, trend meter, or gaining/losing footer. Ahead intervals
 display `+`, behind intervals display `−`. Enable **HUD debug information** in
 the Gadgets tab to show gap diagnostics such as **Building passage history**
-and **ESTIMATE** with measurement age. They are hidden by default in both
-Classic and GT. The reference time and signed intervals
+and **ESTIMATE** with measurement age. They are hidden by default. The reference time and signed intervals
 use milliseconds; this display precision does not change telemetry accuracy.
 
 GT colors, cell sizes, borders, offsets, and type sizes are centralized in
@@ -248,6 +278,25 @@ case-insensitive; each `/o hud` toggles once, while repeated `/o show` or
 `/o hide` keeps the requested state. InSim must be enabled;
 OutSim/OutGauge alone cannot receive commands.
 
+Use `/o hud <gadget>` to toggle one gadget temporarily:
+
+```text
+/o hud radar
+/o hud relative
+```
+
+Gadget names are `radar`, `ahead`, `behind`, `delta`, `speed`, `fuel`,
+`lap-records`, `lap-log`, and `relative`. Names are case-insensitive. Individual
+commands preserve the gadget's **Enabled** setting, position, scale, telemetry,
+and recording. Disabled gadgets must still be enabled in the control panel.
+The master **Show overlays** setting and background-hiding rules still apply.
+
+Individual hidden states survive master hide/show, InSim reconnects, and native
+overlay retries, and reset when OpenRadar restarts. Each hidden gadget's card
+shows **Hidden by LFS command** with a **Show** button to restore it. These
+temporary states are excluded from **Save settings**. Unknown gadget names and
+extra arguments are ignored; `/o show` and `/o hide` remain global commands.
+
 To change the shortcut, edit this top-level setting in your TOML configuration
 and restart OpenRadar:
 
@@ -372,10 +421,7 @@ control-panel preview also keeps its backing. The **Move radar**
 handle and **X/Y** controls in the control panel remain available as alternatives.
 **Radar size** applies once dragging stops and the value has
 settled for 250 ms. **Side range (m)** changes zoom immediately throughout
-0–12 metres in both themes. Classic zooms uniformly: distance guides remain
-circular and car footprints keep their proportions. At tight zoom, distant
-front/rear cars can be outside the visible square; front/rear settings still
-control detection. GT adjusts horizontal placement independently, keeping
+0–12 metres. GT adjusts horizontal placement independently, keeping
 vertical placement stable, compact arrow symbols, and decorative circular guides.
 Zero is a valid side range; detection still includes car-footprint padding.
 Use **Save settings**

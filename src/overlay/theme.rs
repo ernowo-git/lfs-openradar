@@ -10,13 +10,6 @@ pub(super) struct HudTheme {
     pub delta: &'static delta_style::DeltaStyle,
 }
 
-const CLASSIC: HudTheme = HudTheme {
-    radar: &radar_style::CLASSIC,
-    ahead: &gap_style::AHEAD,
-    behind: &gap_style::BEHIND,
-    delta: &delta_style::DELTA,
-};
-
 const GT7: HudTheme = HudTheme {
     radar: &gt7_style::RADAR,
     ahead: &gt7_style::AHEAD,
@@ -26,7 +19,6 @@ const GT7: HudTheme = HudTheme {
 
 pub(super) fn resolve(style: HudStyle) -> &'static HudTheme {
     match style {
-        HudStyle::Classic => &CLASSIC,
         HudStyle::Gt7Inspired => &GT7,
     }
 }

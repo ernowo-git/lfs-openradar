@@ -36,9 +36,9 @@ car_length_m = 4.2
 overlay_x = 40.0
 overlay_y = 160.0
 overlay_size = 320.0
-# Built-in HUD appearance: "gt" (default) or "classic". Changes apply immediately.
+# GT is the sole HUD style; legacy "classic" values load as GT.
 hud_style = "gt"
-# Show passage-history and estimate diagnostics in gap gadgets for either HUD style.
+# Show passage-history and estimate diagnostics in gap gadgets.
 hud_debug = false
 hide_when_background = true
 # Show overlays shortcut. Global on Windows; panel must have focus elsewhere.
@@ -95,6 +95,13 @@ scale = 1.0
 enabled = false
 window_x = 1100.0
 window_y = 260.0
+scale = 1.0
+
+# On-track traffic: 3 ahead, you, 3 behind. Uses InSim without requiring OutSim.
+[relative]
+enabled = false
+window_x = 24.0
+window_y = 360.0
 scale = 1.0
 
 # Car settings by LFS car code (or six-digit vehicle mod ID).

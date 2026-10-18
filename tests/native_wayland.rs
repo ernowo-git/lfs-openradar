@@ -123,7 +123,7 @@ fn native_presentation_recovers_missing_selection_show_and_retry() {
     wait_ready(&overlay);
     let selected = overlay.status().selected_monitor;
     config.wayland.monitor = Some("missing-test-output".into());
-    overlay.update(config.clone(), false, source.clone());
+    overlay.update(config.clone(), false, source.clone(), &Default::default());
     std::thread::sleep(std::time::Duration::from_millis(100));
     assert!(
         !overlay.status().ready,
@@ -131,10 +131,10 @@ fn native_presentation_recovers_missing_selection_show_and_retry() {
     );
     assert!(!overlay.status().visible);
     config.wayland.monitor = selected;
-    overlay.update(config.clone(), false, source.clone());
+    overlay.update(config.clone(), false, source.clone(), &Default::default());
     std::thread::sleep(std::time::Duration::from_millis(100));
     assert!(!overlay.status().visible);
-    overlay.update(config, true, source);
+    overlay.update(config, true, source, &Default::default());
     wait_ready(&overlay);
     overlay.retry();
     wait_ready(&overlay);
@@ -145,7 +145,7 @@ fn native_presentation_recovers_missing_selection_show_and_retry() {
 
 #[test]
 #[ignore = "requires real XWayland and Wayland GPU presentation"]
-fn actual_panel_and_native_eight_gadget_overlay_coexist_in_demo_mode() {
+fn actual_panel_and_native_nine_gadget_overlay_coexist_in_demo_mode() {
     let path =
         std::env::temp_dir().join(format!("openradar-native-app-{}.toml", std::process::id()));
     let config = Config {
@@ -167,6 +167,10 @@ fn actual_panel_and_native_eight_gadget_overlay_coexist_in_demo_mode() {
             ..Default::default()
         },
         fuel: lfs_openradar::config::GapSettings {
+            enabled: true,
+            ..Default::default()
+        },
+        relative: lfs_openradar::config::GapSettings {
             enabled: true,
             ..Default::default()
         },
@@ -245,7 +249,12 @@ fn failed_display_connection_keeps_controller_available_for_update_and_shutdown(
         overlay.status().error.as_deref(),
         Some("cannot connect to native Wayland")
     );
-    overlay.update(Config::default(), false, SnapshotSource::Disconnected);
+    overlay.update(
+        Config::default(),
+        false,
+        SnapshotSource::Disconnected,
+        &Default::default(),
+    );
     assert!(!overlay.status().visible);
     overlay.shutdown();
 }

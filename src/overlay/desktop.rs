@@ -5,12 +5,13 @@ use super::{
     window::{GapWindow, OverlayWindow},
 };
 use crate::{
-    config::{Config, GapSettings, HudStyle, OverlayBackend},
+    config::{Config, GapSettings, OverlayBackend},
     demo::Demo,
     runtime::{Runtime, Snapshot},
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, Vec2, ViewportBuilder, ViewportId};
 use std::{
+    collections::BTreeSet,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -148,6 +149,7 @@ struct App {
     setup_plan: Option<crate::setup::SetupPlan>,
     folder_picker: Option<super::folder_picker::FolderPicker>,
     overlay_enabled: bool,
+    hidden_gadgets: BTreeSet<Gadget>,
     hotkey: Option<super::hotkey::OverlayHotkey>,
     hotkey_error: Option<String>,
     edit_overlay: bool,
@@ -155,7 +157,7 @@ struct App {
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
-    gap_overlays: [GapOverlay; 7],
+    gap_overlays: [GapOverlay; 8],
     tab: ControlTab,
     opening_layout_passes: u8,
     recording_directory: String,
@@ -235,6 +237,7 @@ impl App {
             GapOverlay::new(&config.fuel, &overlay_data),
             GapOverlay::new(&config.lap_records, &overlay_data),
             GapOverlay::new(&config.lap_log, &overlay_data),
+            GapOverlay::new(&config.relative, &overlay_data),
         ];
         let mut app = Self {
             initial_backend: config.overlay_backend,
@@ -265,6 +268,7 @@ impl App {
             setup_plan: None,
             folder_picker: None,
             overlay_enabled: demo,
+            hidden_gadgets: BTreeSet::new(),
             hotkey: None,
             hotkey_error: None,
             edit_overlay: false,
@@ -302,8 +306,29 @@ impl App {
     }
     fn process_lfs_commands(&mut self) {
         if let Some(runtime) = &self.runtime {
-            self.overlay_enabled = runtime.apply_overlay_visibility(self.overlay_enabled);
+            self.overlay_enabled =
+                runtime.apply_overlay_visibility(self.overlay_enabled, &mut self.hidden_gadgets);
         }
+    }
+    fn gadget_visibility_controls(&mut self, ui: &mut egui::Ui, gadget: Gadget) {
+        if self.hidden_gadgets.contains(&gadget) {
+            ui.horizontal(|ui| {
+                ui.label("Hidden by LFS command");
+                if ui.button("Show").clicked() {
+                    self.hidden_gadgets.remove(&gadget);
+                }
+            });
+        }
+    }
+    fn radar_visible(&self, foreground: bool) -> bool {
+        overlay_visible(
+            self.overlay_enabled && !self.hidden_gadgets.contains(&Gadget::Radar),
+            self.config.radar_enabled,
+            self.edit_overlay,
+            self.demo.is_some(),
+            self.config.hide_when_background,
+            foreground,
+        )
     }
     fn process_hotkey(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "linux")]
@@ -550,6 +575,7 @@ impl App {
             &mut self.config.fuel,
             &mut self.config.lap_records,
             &mut self.config.lap_log,
+            &mut self.config.relative,
         ]) {
             if let Ok(mut feedback) = gap.feedback.lock() {
                 if let Some(position) = feedback.moved_to.take() {
@@ -609,16 +635,23 @@ impl App {
                     "lap-records-overlay",
                     "LFS OpenRadar · Lap records",
                 )
-            } else {
+            } else if index == 6 {
                 (
                     Gadget::LapLog,
                     &self.config.lap_log,
                     "lap-log-overlay",
                     "LFS OpenRadar · Lap-time log",
                 )
+            } else {
+                (
+                    Gadget::Relative,
+                    &self.config.relative,
+                    "relative-overlay",
+                    "LFS OpenRadar · Relative",
+                )
             };
             let visible = overlay_visible(
-                self.overlay_enabled,
+                self.overlay_enabled && !self.hidden_gadgets.contains(&kind),
                 settings.enabled,
                 gap.editing,
                 self.demo.is_some(),
@@ -659,6 +692,7 @@ impl App {
                         Gadget::Fuel => super::fuel_style::SIZE,
                         Gadget::LapRecords => super::lap_records_style::SIZE,
                         Gadget::LapLog => super::lap_log_style::SIZE,
+                        Gadget::Relative => super::relative_style::SIZE,
                         Gadget::Delta => theme.delta.panel.size,
                         Gadget::Ahead => theme.ahead.panel.size,
                         Gadget::Behind => theme.behind.panel.size,
@@ -753,6 +787,7 @@ impl App {
                                 self.config.clone(),
                                 self.overlay_enabled,
                                 self.overlay_data.lock().unwrap().source.clone(),
+                                &self.hidden_gadgets,
                             );
                             self.config = native.config_for_save();
                         }
@@ -1004,7 +1039,7 @@ impl App {
         {
             log::info!(target: "openradar_graphics", "Show overlay {}", self.overlay_enabled);
         }
-        ui.label("In LFS: /o hud to toggle, /o show or /o hide (requires InSim).");
+        ui.label("In LFS: /o hud toggles all; /o hud radar toggles one gadget (requires InSim).");
         if let Ok(Some(key)) = self.config.overlay_toggle_key() {
             let scope = if self.hotkey.is_some() {
                 "also while driving"
@@ -1212,29 +1247,11 @@ impl App {
     }
 
     fn paint_gadget_cards(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
-        let previous_style = self.config.hud_style;
         let previous_debug = self.config.hud_debug;
-        ui.horizontal_wrapped(|ui| {
-            ui.label("HUD style");
-            egui::ComboBox::from_id_salt("hud-style")
-                .selected_text(self.config.hud_style.label())
-                .show_ui(ui, |ui| {
-                    for style in [HudStyle::Classic, HudStyle::Gt7Inspired] {
-                        ui.selectable_value(&mut self.config.hud_style, style, style.label());
-                    }
-                });
-            ui.checkbox(&mut self.config.hud_debug, "HUD debug information")
-                .on_hover_text(
-                    "Show gap diagnostic status and measurement age in both HUD styles.",
-                );
-        });
-        if self.config.hud_style != previous_style || self.config.hud_debug != previous_debug {
-            for id in [
-                "radar-overlay",
-                "gap-ahead-overlay",
-                "gap-behind-overlay",
-                "performance-delta-overlay",
-            ] {
+        ui.checkbox(&mut self.config.hud_debug, "HUD debug information")
+            .on_hover_text("Show gap diagnostic status and measurement age.");
+        if self.config.hud_debug != previous_debug {
+            for id in ["gap-ahead-overlay", "gap-behind-overlay"] {
                 ui.ctx().request_repaint_of(ViewportId::from_hash_of(id));
             }
         }
@@ -1263,6 +1280,7 @@ impl App {
                                     ui.set_width((width - 24.0).max(1.0));
                                     ui.set_min_height(CARD_HEIGHT - 24.0);
                                     ui.heading(gadget.title());
+                                    self.gadget_visibility_controls(ui, *gadget);
                                     ui.add_space(6.0);
                                     match gadget {
                                         Gadget::Dashboard => {
@@ -1310,6 +1328,16 @@ impl App {
                                             gap_position_controls(ui, &mut self.config.fuel, &mut gap.window, gap.editing);
                                             ui.add(egui::Slider::new(&mut self.config.fuel.scale, 0.5..=2.0).text("Scale"));
                                             ui.label(egui::RichText::new("REFUEL is additional tank %. * means more than one stop. Usage uses up to 5 full laps; timed-race finish estimates are unavailable.").small());
+                                        }
+                                        Gadget::Relative => {
+                                            ui.checkbox(&mut self.config.relative.enabled, "Enabled");
+                                            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 185.0), egui::Sense::hover());
+                                            super::relative_style::paint(ui.painter(), rect, &snapshot.relative);
+                                            let gap = &mut self.gap_overlays[7];
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            gap_position_controls(ui, &mut self.config.relative, &mut gap.window, gap.editing);
+                                            ui.add(egui::Slider::new(&mut self.config.relative.scale, 0.5..=2.0).text("Scale"));
+                                            ui.label(egui::RichText::new("3 ahead and 3 behind on track. Gaps and ~total laps are estimates. +1L/−1L indicates race lap separation. The stopwatch marks a reliable session fastest.").small());
                                         }
                                         Gadget::LapLog => {
                                             ui.checkbox(&mut self.config.lap_log.enabled, "Enabled");
@@ -1441,6 +1469,7 @@ const GADGETS: &[Gadget] = &[
     Gadget::Fuel,
     Gadget::LapRecords,
     Gadget::LapLog,
+    Gadget::Relative,
 ];
 impl Gadget {
     fn title(self) -> &'static str {
@@ -1453,6 +1482,7 @@ impl Gadget {
             Self::Fuel => "Fuel",
             Self::LapRecords => "Lap records",
             Self::LapLog => "Lap-time log",
+            Self::Relative => "Relative",
         }
     }
 }
@@ -1598,14 +1628,7 @@ impl eframe::App for App {
         }
         if self.active_backend == OverlayBackend::Window {
             let foreground = super::game_foreground().unwrap_or(true);
-            let show_overlay = overlay_visible(
-                self.overlay_enabled,
-                self.config.radar_enabled,
-                self.edit_overlay,
-                self.demo.is_some(),
-                self.config.hide_when_background,
-                foreground,
-            );
+            let show_overlay = self.radar_visible(foreground);
             if self.overlay_window.settle_size(
                 self.config.overlay_size,
                 self.started.elapsed(),
@@ -1647,6 +1670,7 @@ impl eframe::App for App {
                 self.config.clone(),
                 self.overlay_enabled,
                 self.overlay_data.lock().unwrap().source.clone(),
+                &self.hidden_gadgets,
             );
             if self.config.wayland.monitor.is_none() {
                 self.config.wayland.monitor = native.status().selected_monitor;
@@ -1706,6 +1730,15 @@ fn render_gap_overlay(
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
     let theme = theme::resolve(data.config.hud_style);
+    if kind == Gadget::Relative {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                super::relative_style::paint(ui.painter(), ui.max_rect(), &snapshot.relative)
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
     if kind == Gadget::LapLog {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -1920,6 +1953,7 @@ fn follow_view_controls(ui: &mut egui::Ui, config: &mut Config) -> egui::Respons
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HudStyle;
     #[cfg(all(target_os = "linux", feature = "native-wayland"))]
     #[test]
     fn panel_save_keeps_auto_preference_when_native_backend_is_active() {
@@ -2410,13 +2444,144 @@ mod tests {
         assert_eq!(saved.overlay_size, 440.0);
     }
     use crate::overlay::{
-        gap_style,
+        gt7_style,
         render::{estimated_lap_text, lap_time_text},
     };
     use crate::{
         gaps::GapValue,
         radar::{RadarCar, RadarFrame, Threat},
     };
+
+    #[test]
+    fn individual_hiding_controls_every_window_without_changing_configuration() {
+        use eframe::App as _;
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.set_embed_viewports(false);
+        let mut config = Config::default();
+        for &gadget in GADGETS {
+            if let Some(settings) = gadget.window_settings_mut(&mut config) {
+                settings.enabled = true;
+            }
+        }
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        let mut frame = eframe::Frame::_new_kittest();
+        let windows = [
+            (Gadget::Radar, "radar-overlay"),
+            (Gadget::Ahead, "gap-ahead-overlay"),
+            (Gadget::Behind, "gap-behind-overlay"),
+            (Gadget::Delta, "performance-delta-overlay"),
+            (Gadget::Dashboard, "speed-dashboard-overlay"),
+            (Gadget::Fuel, "fuel-overlay"),
+            (Gadget::LapRecords, "lap-records-overlay"),
+            (Gadget::LapLog, "lap-log-overlay"),
+            (Gadget::Relative, "relative-overlay"),
+        ];
+        let input = || egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run(input(), |ctx| app.update(ctx, &mut frame));
+        let saved = toml::to_string(&app.config).unwrap();
+        for (gadget, _) in windows {
+            app.hidden_gadgets.insert(gadget);
+            for master in [true, false, true] {
+                app.overlay_enabled = master;
+                let output = ctx.run(input(), |ctx| app.update(ctx, &mut frame));
+                for (other, id) in windows {
+                    assert_eq!(
+                        output.viewport_output[&ViewportId::from_hash_of(id)]
+                            .builder
+                            .visible,
+                        Some(master && other != gadget),
+                        "{gadget:?} / {other:?}"
+                    );
+                }
+                assert_eq!(toml::to_string(&app.config).unwrap(), saved);
+            }
+            app.hidden_gadgets.remove(&gadget);
+        }
+        app.hidden_gadgets.insert(Gadget::Relative);
+        let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        app.config.outsim_bind = reservation.local_addr().unwrap();
+        app.config.outgauge_bind = app.config.outsim_bind;
+        app.config.insim_enabled = false;
+        drop(reservation);
+        let directory = std::env::temp_dir().join(format!(
+            "openradar-hud-reconnect-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        app.config_path = directory.join("config.toml");
+        for _ in 0..2 {
+            app.connect();
+            assert!(app.runtime.is_some(), "{:?}", app.message);
+            assert!(app.hidden_gadgets.contains(&Gadget::Relative));
+        }
+        app.runtime = None;
+        app.config_store = None;
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn hidden_card_show_button_preserves_master_and_disabled_gadget() {
+        let ctx = egui::Context::default();
+        let mut app = App::new(
+            Config::default(),
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        app.overlay_enabled = false;
+        app.hidden_gadgets = BTreeSet::from([Gadget::Radar, Gadget::Relative]);
+        let saved = toml::to_string(&app.config).unwrap();
+        let mut draw = |events| {
+            ctx.run(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        app.gadget_visibility_controls(ui, Gadget::Relative)
+                    });
+                },
+            )
+        };
+        let output = draw(vec![]);
+        let show = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == "Show" => {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .expect("hidden gadget has a Show button");
+        for pressed in [true, false] {
+            draw(vec![
+                egui::Event::PointerMoved(show),
+                egui::Event::PointerButton {
+                    pos: show,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        assert_eq!(app.hidden_gadgets, BTreeSet::from([Gadget::Radar]));
+        assert!(!app.overlay_enabled);
+        assert!(!app.config.relative.enabled);
+        assert_eq!(toml::to_string(&app.config).unwrap(), saved);
+        let restarted = App::new(app.config, PathBuf::from("unused.toml"), true, None, None);
+        assert!(restarted.hidden_gadgets.is_empty());
+    }
 
     #[test]
     fn hotkey_toggles_shared_visibility_without_changing_enabled_gadgets() {
@@ -2926,7 +3091,7 @@ mod tests {
                                         scale,
                                         debug: false,
                                     },
-                                    &gap_style::AHEAD,
+                                    &gt7_style::AHEAD,
                                 );
                             });
                     },
@@ -3020,7 +3185,7 @@ mod tests {
         ctx.set_embed_viewports(false);
         let mut config = Config {
             radar_enabled: false,
-            hud_style: HudStyle::Classic,
+            hud_style: HudStyle::Gt7Inspired,
             ..Default::default()
         };
         config.gap_ahead.enabled = true;
@@ -3056,9 +3221,9 @@ mod tests {
                 screen_rect: Some(Rect::from_min_size(
                     Pos2::ZERO,
                     if id == ViewportId::from_hash_of("performance-delta-overlay") {
-                        Vec2::new(230.0, 100.0)
+                        Vec2::new(440.0, 132.0)
                     } else {
-                        Vec2::new(230.0, 76.0)
+                        Vec2::new(320.0, 106.0)
                     },
                 )),
                 ..Default::default()
@@ -3079,11 +3244,10 @@ mod tests {
         };
         assert!(text_present(
             &draw(callbacks[0].0, callbacks[0].1.as_ref()),
-            "AHEAD  —"
+            "AHEAD"
         ));
         app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
-        for ((id, callback), expected) in callbacks.iter().zip(["AHEAD  ~5.0 s", "BEHIND  ~2.3 s"])
-        {
+        for ((id, callback), expected) in callbacks.iter().zip(["+5.000", "-2.300"]) {
             let output = draw(*id, callback.as_ref());
             assert!(text_present(&output, expected));
             assert!(output.viewport_output[id].repaint_delay <= Duration::from_millis(16));
@@ -3091,26 +3255,18 @@ mod tests {
         app.set_source(OverlaySource::Disconnected);
         assert!(text_present(
             &draw(callbacks[1].0, callbacks[1].1.as_ref()),
-            "BEHIND  —"
+            "BEHIND"
         ));
-        // The same retained callbacks must observe a changed theme in either direction.
-        for (style, expected) in [
-            (
-                HudStyle::Gt7Inspired,
-                ["AHEAD", "BEHIND", "SESSION BEST / LIVE DELTA"],
-            ),
-            (HudStyle::Classic, ["AHEAD  —", "BEHIND  —", "DELTA  — s"]),
-        ] {
-            for gap in &app.gap_overlays {
-                gap.data.lock().unwrap().config.hud_style = style;
-            }
-            for ((id, callback), label) in callbacks.iter().zip(expected) {
-                assert!(text_present(&draw(*id, callback.as_ref()), label));
-            }
+        for ((id, callback), label) in
+            callbacks
+                .iter()
+                .zip(["AHEAD", "BEHIND", "SESSION BEST / LIVE DELTA"])
+        {
+            assert!(text_present(&draw(*id, callback.as_ref()), label));
         }
         // Retained gap callbacks also observe diagnostics changes without a parent pass.
         app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
-        for style in [HudStyle::Classic, HudStyle::Gt7Inspired] {
+        for style in [HudStyle::Gt7Inspired] {
             for debug in [false, true, false] {
                 for gap in &app.gap_overlays {
                     let mut data = gap.data.lock().unwrap();
@@ -3326,7 +3482,7 @@ mod tests {
                 estimated_lap_seconds: Some(83.45),
                 status: "Estimated vs session best".into(),
             };
-            let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 100.0) * scale);
+            let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(440.0, 132.0) * scale);
             let output = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(rect),
@@ -3341,7 +3497,7 @@ mod tests {
                             scale,
                             ..Default::default()
                         },
-                        theme::resolve(HudStyle::Classic).delta,
+                        theme::resolve(HudStyle::Gt7Inspired).delta,
                     );
                 },
             );
@@ -3353,12 +3509,12 @@ mod tests {
                     _ => None,
                 })
                 .collect();
+            assert!(texts.iter().any(|t| t.galley.job.text == "1:23.450"));
             assert!(
                 texts
                     .iter()
-                    .any(|t| t.galley.job.text == "Estimated lap 1:23.45")
+                    .any(|t| t.galley.job.text.contains("ESTIMATED LAP"))
             );
-            assert!(texts.iter().any(|t| t.galley.job.text.contains("ESTIMATE")));
             for text in texts {
                 assert!(
                     rect.expand(scale)
@@ -3380,7 +3536,7 @@ mod tests {
         super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let mut config = Config {
-            hud_style: HudStyle::Classic,
+            hud_style: HudStyle::Gt7Inspired,
             ..Default::default()
         };
         config.performance_delta.enabled = true;
@@ -3394,7 +3550,7 @@ mod tests {
         assert_eq!(output.viewport_output[&id].builder.decorations, Some(true));
         assert_eq!(
             output.viewport_output[&id].builder.inner_size,
-            Some(Vec2::new(230.0, 100.0))
+            Some(Vec2::new(440.0, 132.0))
         );
         let callback = output.viewport_output[&id].viewport_ui_cb.clone().unwrap();
         app.set_source(OverlaySource::Demo(Arc::new(Mutex::new(Demo::default()))));
@@ -3403,7 +3559,7 @@ mod tests {
         let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
         let mut input = egui::RawInput {
             viewport_id: id,
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(230.0, 100.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(440.0, 132.0))),
             ..Default::default()
         };
         input.viewports.insert(
@@ -3415,9 +3571,9 @@ mod tests {
         );
         let output = ctx.run(input, |child| callback(child));
         assert!(output.shapes.iter().any(|s| matches!(&s.shape,
-            Shape::Text(t) if t.galley.job.text.starts_with("DELTA  +0.00 s"))));
+            Shape::Text(t) if t.galley.job.text == "+0.000")));
         assert!(output.shapes.iter().any(|s| matches!(&s.shape,
-            Shape::Text(t) if t.galley.job.text == "Estimated lap 1:40.00")));
+            Shape::Text(t) if t.galley.job.text == "1:40.000")));
         assert!(output.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
         assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
         app.gap_overlays[2].feedback.lock().unwrap().moved_to = Some(Pos2::new(-800.0, 440.0));
@@ -3426,6 +3582,64 @@ mod tests {
         assert_eq!(app.config.performance_delta.window_x, Some(-800.0));
         assert!(!app.config.performance_delta.enabled);
         assert!(app.config.gap_ahead.enabled && app.config.radar_enabled);
+    }
+
+    #[test]
+    fn relative_viewport_refreshes_and_closes_without_the_radar_or_parent_repaint() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        ctx.set_embed_viewports(false);
+        let mut config = Config {
+            radar_enabled: false,
+            ..Default::default()
+        };
+        config.relative.enabled = true;
+        config.relative.scale = 1.25;
+        let mut app = App::new(config, PathBuf::from("unused.toml"), true, None, None);
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            app.show_gap_overlays(ctx, true)
+        });
+        let id = ViewportId::from_hash_of("relative-overlay");
+        assert_eq!(
+            output.viewport_output[&id].builder.inner_size,
+            Some(super::super::relative_style::SIZE * 1.25)
+        );
+        let callback = output.viewport_output[&id].viewport_ui_cb.clone().unwrap();
+        let parent_passes = ctx.cumulative_pass_nr_for(ViewportId::ROOT);
+        let draw = || {
+            let mut input = egui::RawInput {
+                viewport_id: id,
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    super::super::relative_style::SIZE * 1.25,
+                )),
+                ..Default::default()
+            };
+            input.viewports.insert(
+                id,
+                egui::ViewportInfo {
+                    parent: Some(ViewportId::ROOT),
+                    ..Default::default()
+                },
+            );
+            ctx.run(input, |child| callback(child))
+        };
+        assert!(
+            draw().shapes.iter().any(
+                |shape| matches!(&shape.shape, Shape::Text(text) if text.galley.text()=="YOU")
+            )
+        );
+        app.set_source(OverlaySource::Disconnected);
+        assert!(
+            !draw().shapes.iter().any(
+                |shape| matches!(&shape.shape, Shape::Text(text) if text.galley.text()=="YOU")
+            )
+        );
+        assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
+        app.gap_overlays[7].feedback.lock().unwrap().closed = true;
+        app.receive_overlay_feedback();
+        assert!(!app.config.relative.enabled);
+        assert!(!app.config.radar_enabled);
     }
 
     #[test]
@@ -3634,7 +3848,7 @@ mod tests {
         super::super::fonts::install(&ctx);
         ctx.set_embed_viewports(false);
         let config = Config {
-            hud_style: HudStyle::Classic,
+            hud_style: HudStyle::Gt7Inspired,
             ..Default::default()
         };
         let window = OverlayWindow::new(&config);
@@ -3683,7 +3897,7 @@ mod tests {
         // or running another control-panel pass.
         data.lock().unwrap().source = OverlaySource::Demo(Arc::new(Mutex::new(Demo::default())));
         let live = draw_child();
-        assert!(contains_text(&live, "YOU"));
+        assert!(contains_text(&live, "Radar"));
         assert!(!contains_text(&live, "RADAR PAUSED"));
 
         // A disconnect must propagate just as promptly, without bypassing the
@@ -3692,10 +3906,7 @@ mod tests {
         let paused = draw_child();
         assert!(contains_text(&paused, "RADAR PAUSED"));
         assert!(paused.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
-        data.lock().unwrap().config.hud_style = HudStyle::Gt7Inspired;
         assert!(contains_text(&draw_child(), "Radar"));
-        data.lock().unwrap().config.hud_style = HudStyle::Classic;
-        assert!(!contains_text(&draw_child(), "Radar"));
         assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
 
         data.lock().unwrap().visible = false;

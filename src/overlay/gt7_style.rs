@@ -5,8 +5,7 @@ use super::{
     gadget_style::{CellStyle, PanelStyle, TextFont, TextStyle, TimingCellStyle},
     gap_style::{DriverRowStyle, GapStyle},
     radar_style::{
-        self, MarkerShape, ProximityStyle, RadarCarStyle, RadarStyle, RadialBackgroundStyle,
-        SideWarningStyle,
+        ProximityStyle, RadarCarStyle, RadarStyle, RadialBackgroundStyle, SideWarningStyle,
     },
 };
 use eframe::egui::{Align2, Color32, Stroke, Vec2};
@@ -74,7 +73,6 @@ pub(super) const RADAR: RadarStyle = RadarStyle {
     alongside: &ALONGSIDE,
     potential_contact: &CONTACT,
     uncertain: &UNCERTAIN,
-    marker: MarkerShape::Arrow,
     fill_brightness: 1.0,
     panel: PanelStyle {
         size: Vec2::new(320.0, 320.0),
@@ -126,12 +124,18 @@ pub(super) const RADAR: RadarStyle = RadarStyle {
     paused: TextStyle {
         font: TextFont::Body,
         color: WHITE,
-        ..radar_style::CLASSIC.paused
+        font_size: 14.0,
+        offset: Vec2::ZERO,
+        align: Align2::CENTER_CENTER,
+        outline: Stroke::NONE,
     },
     hint: TextStyle {
         font: TextFont::Body,
         color: MUTED,
-        ..radar_style::CLASSIC.hint
+        font_size: 10.0,
+        offset: Vec2::new(0.0, -10.0),
+        align: Align2::CENTER_BOTTOM,
+        outline: Stroke::NONE,
     },
 };
 

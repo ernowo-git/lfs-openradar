@@ -16,12 +16,14 @@ fn driver(id: u8) -> Player {
         kind: 2,
         name: format!("AI {id}"),
         model: "XRG".into(),
+        in_pits: false,
         abs_enabled: false,
         in_garage: false,
     }
 }
 fn state(viewed: u8, flags: u16, camera: u8) -> Packet {
     Packet::State(State {
+        session: Default::default(),
         flags,
         camera,
         viewed,

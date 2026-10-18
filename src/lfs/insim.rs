@@ -30,6 +30,7 @@ pub struct Player {
     pub model: String,
     pub in_garage: bool,
     pub abs_enabled: bool,
+    pub in_pits: bool,
 }
 impl Player {
     pub fn local_human(&self) -> bool {
@@ -38,11 +39,20 @@ impl Player {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct State {
+    pub session: SessionInfo,
     pub flags: u16,
     pub camera: u8,
     pub viewed: u8,
     pub track: String,
 }
+/// Native session settings from IS_STA. RaceLaps uses LFS's encoded lap/hour format.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionInfo {
+    pub kind: u8,
+    pub race_laps: u8,
+    pub qual_mins: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrackInfo {
     pub track: String,
@@ -66,6 +76,15 @@ pub enum Packet {
     Tiny(u8),
     /// Hidden `/o` message typed on the local PC (MSO_O).
     LocalCommand(String),
+    RaceTime(u32),
+    Result {
+        plid: u8,
+        name: String,
+        best_ms: u32,
+        index: u8,
+        total: u8,
+        requested: bool,
+    },
     LocalLights {
         request: u8,
         headlights: u8,
@@ -190,7 +209,10 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
         }
         4 => {
             exact(8)?;
-            if p[3] == 10 {
+            if p[3] == 6 {
+                // init requests protocol 9: SMALL_RTP is in hundredths, even on v10 LFS.
+                Packet::RaceTime(u32_at(p, 4).saturating_mul(10))
+            } else if p[3] == 10 {
                 Packet::LocalLights {
                     request: p[2],
                     headlights: ((u32_at(p, 4) >> 18) & 3) as u8,
@@ -202,6 +224,11 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
         5 => {
             exact(28)?;
             Packet::State(State {
+                session: SessionInfo {
+                    kind: p[15],
+                    qual_mins: p[16],
+                    race_laps: p[17],
+                },
                 flags: u16_at(p, 8),
                 camera: p[10],
                 viewed: p[11],
@@ -254,6 +281,7 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
                 name: plain_driver_name(&text(&p[8..32])),
                 model: car_name(&p[40..44]),
                 in_garage: false,
+                in_pits: u16_at(p, 6) & 0x100 != 0,
                 abs_enabled: p[72] & SETF_ABS_ENABLE != 0,
             };
             if p[2] != 0 {
@@ -302,6 +330,17 @@ pub fn decode(p: &[u8]) -> Result<Packet, String> {
             Packet::PitLane {
                 plid: p[3],
                 entered: p[4] != 0,
+            }
+        }
+        35 => {
+            exact(84)?;
+            Packet::Result {
+                plid: p[3],
+                name: plain_driver_name(&text(&p[28..52])),
+                best_ms: u32_at(p, 68),
+                index: p[80],
+                total: p[81],
+                requested: p[2] != 0,
             }
         }
         34 => {
