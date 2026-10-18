@@ -230,12 +230,18 @@ fn records() -> Records {
 struct TemporaryConfig(std::path::PathBuf);
 impl TemporaryConfig {
     fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("openradar-records-{}-{unique}", std::process::id()));
+        // Concurrent Windows tests can receive the same wall-clock timestamp.
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "openradar-records-{}-{unique}-{sequence}",
+            std::process::id()
+        ));
         std::fs::create_dir(&directory).unwrap();
         Self(directory.join("config.toml"))
     }
