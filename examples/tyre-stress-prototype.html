@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenRadar · tyre stress prototype</title>
+<title>OpenRadar · tyre wear estimation prototype</title>
 <style>
   :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #11151c; color: #e2e8f0; }
   body { max-width: 1180px; margin: auto; padding: 28px; }
@@ -21,13 +21,16 @@
   .error { color: #ffb4b4; } .notice { border-left: 3px solid #8dc6ff; padding-left: 12px; }
   code { color: #c6d8f2; } a { color: #8dc6ff; } details { margin-top: 15px; } summary { cursor: pointer; }
   #walkthrough { min-height: 90px; } .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .wear-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 16px 0; }
+  .wear-card { background: #11151c; border: 1px solid #344052; border-radius: 6px; padding: 14px; }
+  .wear-card strong { display: block; font-size: 28px; font-variant-numeric: tabular-nums; }
   @media(max-width: 600px) { body { padding: 12px; } section { padding: 12px; } h1 { font-size: 25px; } }
 </style>
 <header>
   <div class="badge">OPENRADAR / EXPERIMENTAL</div>
-  <h1>Tyre stress, before tyre wear</h1>
-  <p>Can a load, motion and slip index distinguish gentle driving, sliding, burnouts and unloaded wheels?</p>
-  <p class="notice">This is an uncalibrated stress index. It does not measure rubber loss, remaining tread, grip loss or tyre life.</p>
+  <h1>Tyre wear estimation</h1>
+  <p>Explore per-wheel tread loss and remaining tread estimated from load, motion and combined slip.</p>
+  <p class="notice">Wear percentages are model estimates. Supply a wear coefficient and starting tread, or try clearly marked illustrative values. LFS does not report measured wear here.</p>
   <p id="capture-info" class="muted"></p>
 </header>
 <section>
@@ -52,6 +55,25 @@
     <label>Segment <select id="segment"></select></label>
   </div>
   <p id="segment-info" class="muted"></p>
+  <h2>Estimated tyre wear</h2>
+  <p><code>estimated loss (percentage points) = accumulated stress × wear coefficient</code></p>
+  <div class="row">
+    <label>Wear coefficient <input id="wear-factor" type="number" min="0" step="any" placeholder="unknown"> pp / stress unit</label>
+    <button id="wear-example">Use illustrative values</button>
+    <button id="wear-clear">Clear this segment's calibration</button>
+  </div>
+  <div class="row">
+    <span>Remaining tread at this segment's start:</span>
+    <label>W0 <input id="tread0" type="number" min="0" max="100" step="any" placeholder="unknown"> %</label>
+    <label>W1 <input id="tread1" type="number" min="0" max="100" step="any" placeholder="unknown"> %</label>
+    <label>W2 <input id="tread2" type="number" min="0" max="100" step="any" placeholder="unknown"> %</label>
+    <label>W3 <input id="tread3" type="number" min="0" max="100" step="any" placeholder="unknown"> %</label>
+    <button id="wear-fresh">Assume fresh tyres: 100%</button>
+  </div>
+  <p id="wear-status" class="muted" role="status"></p>
+  <div id="wear-cards" class="wear-cards" aria-label="Per-wheel estimated tread"></div>
+  <p class="muted">Loss is capped at the available starting tread (or 100 pp when it is unknown). Starting tread is never inferred across a gap. A predicted 0% does not predict when LFS will puncture a tyre.</p>
+  <div class="row"><label>Chart <select id="chart-metric"><option value="remaining">Estimated remaining tread %</option><option value="loss">Estimated tread loss (pp)</option><option value="stress">Accumulated stress</option></select></label></div>
   <svg id="chart" viewBox="0 0 1080 260" role="img" aria-label="Accumulated stress over segment time for four wheel indices"></svg>
   <div class="row">
     <button id="play">Play</button><button id="start">Start</button>
@@ -71,6 +93,8 @@
     <p>Each segment starts at zero. Recorded OutSim gaps, identity changes, duplicate/backwards clocks, and source or receipt intervals over 250 ms start another segment. No stress is inferred across those boundaries. Missing data can therefore undercount stress.</p>
     <p>Make one recording per known tyre stint. This OutSim/OutGauge report cannot detect fresh tyres, a same-car driver change, or every teleport. It cannot reconstruct wear from before recording started. A completed file does not certify a complete stint.</p>
     <p>Compare the same car, compound, track, setup and radius assumptions first. Internal tyre air temperature is neither ambient nor tread surface temperature. Unknown temperature effects and local flat spots remain unmodeled.</p>
+    <p>Calibration belongs to the selected segment only. Other segments start with unknown wear inputs. Changing nominal radii clears wear coefficients because the stress scale changed. Inputs stay in this page's memory and are lost when it is reloaded.</p>
+    <p>The illustrative coefficient is 0.001 percentage points per stress unit with an assumed 100% starting tread. These numbers are arbitrary demonstration values, including when applied to a real recording. User-entered coefficients are also unverified until tested against independent wear observations.</p>
     <p><a href="https://www.lfs.net/programmer/raf">LFS slip-fraction definition</a> · <a href="https://www.lfs.net/programmer/carinfo">LFS car-info export</a></p>
   </details>
 </section>
@@ -82,10 +106,10 @@
   <div id="walkthrough" role="tabpanel"></div>
   <p id="action-status" role="status" class="muted"></p>
 </section>
-<footer class="muted">Throwaway prototype. Check behavior against F9 observations and separate validation runs before fitting a wear model. No data is uploaded.</footer>
+<footer class="muted">Throwaway prototype. Fit and validate wear coefficients against independent observations before relying on the estimates. No data is uploaded.</footer>
 <script id="capture-data" type="application/json">__CAPTURE_DATA__</script>
 <script id="stress-model">
-// Pure prototype logic. No DOM or physical wear coefficients.
+// Pure prototype logic. No DOM or claims of calibrated LFS tyre physics.
 const DEFAULT_RADII = [0.3, 0.3, 0.3, 0.3];
 const MAX_GAP_MS = 250;
 function wheelRates(frame, radii) {
@@ -123,6 +147,17 @@ function analyse(frames, radii = DEFAULT_RADII) {
   }
   return segments;
 }
+function estimateWear(stress, factor, initialRemaining = null) {
+  if (!Number.isFinite(stress) || stress < 0) throw Error('stress must be finite and nonnegative');
+  if (initialRemaining !== null && (!Number.isFinite(initialRemaining) || initialRemaining < 0 || initialRemaining > 100))
+    throw Error('starting tread must be between 0 and 100%');
+  if (factor === null) return {loss_pp: null, remaining_percent: null, depleted: false};
+  if (!Number.isFinite(factor) || factor <= 0) throw Error('wear coefficient must be finite and positive');
+  // ponytail: linear exposure-to-wear conversion; replace only after independent calibration supports a richer model.
+  const loss = Math.min(initialRemaining ?? 100, stress * factor);
+  const remaining = initialRemaining === null ? null : Math.max(0, initialRemaining - loss);
+  return {loss_pp: loss, remaining_percent: remaining, depleted: remaining === 0};
+}
 function syntheticFrame(time, kind = 'roll') {
   const speed = kind === 'burnout' ? 0 : 30;
   return {time_ms: time, received_us: time * 1000, speed_mps: speed,
@@ -158,6 +193,19 @@ function modelSelfCheck() {
   const a = syntheticFrame(0xfffffff0, 'slide'), b = syntheticFrame(84, 'slide');
   a.received_us = 0; b.received_us = 100000;
   check(analyse([a,b]).length === 1 && Math.abs(total([a,b])[0] - 12) < 1e-9, 'source clock rollover');
+  check(estimateWear(1000, 0.01, 80).loss_pp === 10 && estimateWear(1000, 0.01, 80).remaining_percent === 70, 'wear conversion');
+  check(estimateWear(0, 0.01, 80).remaining_percent === 80, 'starting tread is preserved');
+  check(estimateWear(1000, null, 100).remaining_percent === null, 'no coefficient means unknown wear');
+  check(estimateWear(1000, 0.01).loss_pp === 10 && estimateWear(1000, 0.01).remaining_percent === null, 'unknown starting tread');
+  check(estimateWear(20000, 0.01, 80).loss_pp === 80 && estimateWear(20000, 0.01, 80).depleted, 'depletion is capped');
+  check(estimateWear(0, 0.01, 0).remaining_percent === 0, 'zero starting tread is valid');
+  check(estimateWear(Number.MAX_VALUE, Number.MAX_VALUE, 100).remaining_percent === 0, 'extreme coefficients remain bounded');
+  const loaded = total(pair('load'));
+  check(estimateWear(loaded[0], 0.01, 100).loss_pp === estimateWear(loaded[1], 0.01, 100).loss_pp * 2, 'wear follows per-wheel load');
+  for (const args of [[1,0,100], [1,-1,100], [1,Infinity,100], [1,0.01,-1], [1,0.01,101], [NaN,0.01,100]]) {
+    let rejected = false; try { estimateWear(...args); } catch (_) { rejected = true; }
+    check(rejected, 'invalid wear input rejected');
+  }
   return 'Model self-checks passed. Numerical checks do not validate LFS wear accuracy.';
 }
 </script>
@@ -166,6 +214,7 @@ const capture = JSON.parse(document.getElementById('capture-data').textContent);
 const $ = id => document.getElementById(id);
 const colors = ['#8dc6ff', '#73d8bf', '#e8b275', '#c6a7f0'];
 let experiment = [], segments = [], radii = DEFAULT_RADII.slice(), playing = false, animation = 0;
+const wearCalibrations = new Map();
 const fmt = (value, places = 2) => value.toLocaleString(undefined, {maximumFractionDigits: places});
 const recordingAvailable = capture.frames.length > 0;
 $('source').options[0].disabled = !recordingAvailable;
@@ -175,6 +224,51 @@ try { $('model-status').textContent = modelSelfCheck(); }
 catch (error) { $('model-status').textContent = error.message; $('model-status').className = 'error'; throw error; }
 function stop() { playing = false; cancelAnimationFrame(animation); $('play').textContent = 'Play'; }
 function selectedSegment() { return segments[Number($('segment').value) || 0]; }
+function wearKey() { return `${$('source').value}:${$('segment').value}`; }
+function wearConfig() { return wearCalibrations.get(wearKey()) || {factor:null, starts:[null,null,null,null], origin:'user', error:null}; }
+function optionalNumber(input) { return input.value.trim() === '' ? null : Number(input.value); }
+function wearInputError(factor, starts) {
+  if (factor !== null && (!Number.isFinite(factor) || factor <= 0)) return 'Enter a positive, finite wear coefficient.';
+  if (starts.some(v => v !== null && (!Number.isFinite(v) || v < 0 || v > 100))) return 'Starting tread must be between 0 and 100%. Leave unknown values empty.';
+  return null;
+}
+function loadWearInputs() {
+  const config = wearConfig(), disabled = !selectedSegment();
+  $('wear-factor').value = config.factor ?? '';
+  for (let i = 0; i < 4; i++) $('tread' + i).value = config.starts[i] ?? '';
+  for (const id of ['wear-factor','wear-example','wear-clear','wear-fresh','tread0','tread1','tread2','tread3']) $(id).disabled = disabled;
+}
+function saveWearInputs(origin = wearConfig().origin) {
+  if (!selectedSegment()) return;
+  const factor = optionalNumber($('wear-factor'));
+  const starts = [0,1,2,3].map(i => optionalNumber($('tread' + i)));
+  const error = wearInputError(factor, starts);
+  wearCalibrations.set(wearKey(), {factor, starts, origin, error});
+  renderChart(); renderSample();
+}
+function useIllustrativeWear() {
+  if (!selectedSegment()) return;
+  wearCalibrations.set(wearKey(), {factor:0.001, starts:[100,100,100,100], origin:'illustrative', error:null});
+  $('chart-metric').value = 'remaining';
+  loadWearInputs(); renderChart(); renderSample();
+}
+function wearAt(point, wheel) {
+  const config = wearConfig();
+  return point && !config.error ? estimateWear(point.totals[wheel], config.factor, config.starts[wheel])
+    : {loss_pp:null, remaining_percent:null, depleted:false};
+}
+function renderWear(point) {
+  const config = wearConfig();
+  $('wear-status').className = config.error ? 'error' : 'muted';
+  $('wear-status').textContent = !point ? 'Select a segment or create a synthetic sample to estimate wear.'
+    : config.error || (config.factor === null
+      ? 'Uncalibrated: enter a wear coefficient, or choose Use illustrative values to explore percentage estimates.'
+      : `${config.origin === 'illustrative' ? 'ILLUSTRATIVE ESTIMATE — arbitrary demonstration values' : 'User-supplied coefficient — accuracy unverified'} · ${config.factor} pp / stress unit · applies only to this segment.${config.starts.some(v => v === null) ? ' Enter starting tread for each unknown wheel to see remaining tread.' : ''}`);
+  $('wear-cards').innerHTML = [0,1,2,3].map(i => {
+    const wear = wearAt(point, i);
+    return `<div class="wear-card"><span class="wheel${i}">W${i} · estimated remaining</span><strong>${wear.remaining_percent === null ? '—' : fmt(wear.remaining_percent) + '%'}</strong><span>${wear.loss_pp === null ? 'Wear loss unknown' : fmt(wear.loss_pp) + ' pp used this segment'}</span><br><small>${config.error ? 'Check wear inputs' : wear.depleted ? 'Model depleted; puncture timing unknown' : config.starts[i] === null ? 'Starting tread unknown' : 'Assumed starting tread: ' + fmt(config.starts[i]) + '%'}</small></div>`;
+  }).join('');
+}
 function recalculate(atEnd = false) {
   stop();
   const proposed = [0,1,2,3].map(i => Number($('radius' + i).value));
@@ -183,9 +277,13 @@ function recalculate(atEnd = false) {
     $('model-status').className = 'error';
     segments = []; $('segment').replaceChildren(); changeSegment(); return;
   }
+  const changedRadii = proposed.some((r, i) => r !== radii[i]);
+  if (changedRadii) for (const config of wearCalibrations.values()) {
+    config.factor = null; config.error = wearInputError(null, config.starts);
+  }
   radii = proposed;
   $('model-status').className = 'muted';
-  $('model-status').textContent = `Active nominal radii: ${radii.map(r => r.toFixed(3)).join(', ')} m. No temperature multiplier.`;
+  $('model-status').textContent = `Active nominal radii: ${radii.map(r => r.toFixed(3)).join(', ')} m. No temperature multiplier.${changedRadii ? ' Wear coefficients cleared because the stress scale changed.' : ''}`;
   segments = analyse($('source').value === 'recording' ? capture.frames : experiment, radii);
   $('segment').replaceChildren(...segments.map((segment, i) => {
     const option = document.createElement('option'); option.value = i;
@@ -206,23 +304,33 @@ function changeSegment(atEnd = false) {
   $('segment-info').textContent = segment
     ? `Segment ${Number($('segment').value) + 1}/${segments.length} · ${segment.reason} · ${segment.points.length.toLocaleString()} samples. Totals start at zero for this segment.`
     : 'No experiment samples yet. Use a button below to begin.';
-  renderChart(); renderSample();
+  loadWearInputs(); renderChart(); renderSample();
 }
 function renderChart() {
   const points = selectedSegment()?.points || [];
   const end = points.at(-1), duration = end?.elapsed || 1;
-  const maximum = Math.max(1, ...(end?.totals || [0]));
-  let svg = `<g fill="#a5b1c4" font-family="system-ui" font-size="13"><text x="65" y="23">Accumulated stress units</text><text x="65" y="245">0 s</text><text x="920" y="245">${fmt(end?.elapsed || 0)} s</text><text x="8" y="47">${fmt(maximum, 0)}</text><text x="35" y="218">0</text></g><path d="M65 35V215H1055" stroke="#344052" fill="none"/>`;
+  const metric = $('chart-metric').value;
+  const label = {stress:'Accumulated stress units', loss:'Estimated tread loss (percentage points)', remaining:'Estimated remaining tread %'}[metric];
+  const valueAt = (point, wheel) => metric === 'stress' ? point.totals[wheel]
+    : wearAt(point, wheel)[metric === 'remaining' ? 'remaining_percent' : 'loss_pp'];
+  const maximum = metric === 'stress' ? Math.max(1, ...(end?.totals || [0])) : 100;
+  let svg = `<g fill="#a5b1c4" font-family="system-ui" font-size="13"><text x="65" y="23">${label}</text><text x="65" y="245">0 s</text><text x="920" y="245">${fmt(end?.elapsed || 0)} s</text><text x="8" y="47">${fmt(maximum, 0)}</text><text x="35" y="218">0</text></g><path d="M65 35V215H1055" stroke="#344052" fill="none"/>`;
+  let lines = 0;
   if (points.length) for (let wheel = 0; wheel < 4; wheel++) {
+    if (valueAt(end, wheel) === null) continue;
     const stride = Math.max(1, Math.ceil(points.length / 1200));
     const sampled = points.filter((_, i) => i % stride === 0 || i === points.length - 1);
-    const d = sampled.map((p, i) => `${i ? 'L' : 'M'}${65 + p.elapsed / duration * 990},${215 - p.totals[wheel] / maximum * 175}`).join(' ');
+    const d = sampled.map((p, i) => `${i ? 'L' : 'M'}${65 + p.elapsed / duration * 990},${215 - valueAt(p, wheel) / maximum * 175}`).join(' ');
     svg += `<path d="${d}" fill="none" stroke="${colors[wheel]}" stroke-width="2"/>`;
+    lines++;
   }
+  if (!lines && metric !== 'stress') svg += '<text x="180" y="125" fill="#a5b1c4" font-family="system-ui" font-size="16">Supply wear inputs above, or try illustrative values.</text>';
+  $('chart').setAttribute('aria-label', label + ' over segment time for four wheel indices');
   $('chart').innerHTML = svg + '<path id="chart-cursor" stroke="#a5b1c4" stroke-dasharray="4 4"/>';
 }
 function renderSample() {
   const segment = selectedSegment(), point = segment?.points[Number($('cursor').value)];
+  renderWear(point);
   for (const id of ['play','start','end','cursor']) $(id).disabled = !point;
   if (!point) { $('wheels').replaceChildren(); $('raw').replaceChildren(); $('clock').textContent = ''; return; }
   const frame = point.frame;
@@ -235,6 +343,12 @@ function renderSample() {
 $('source').onchange = () => recalculate();
 $('segment').onchange = () => changeSegment(true);
 $('recalculate').onclick = () => recalculate();
+$('wear-factor').oninput = () => saveWearInputs('user');
+for (let i = 0; i < 4; i++) $('tread' + i).oninput = () => saveWearInputs();
+$('wear-example').onclick = useIllustrativeWear;
+$('wear-fresh').onclick = () => { for (let i = 0; i < 4; i++) $('tread' + i).value = 100; saveWearInputs(); };
+$('wear-clear').onclick = () => { wearCalibrations.delete(wearKey()); loadWearInputs(); renderChart(); renderSample(); };
+$('chart-metric').onchange = () => { renderChart(); renderSample(); };
 $('cursor').oninput = () => { stop(); renderSample(); };
 $('start').onclick = () => { stop(); $('cursor').value = 0; renderSample(); };
 $('end').onclick = () => { stop(); $('cursor').value = $('cursor').max; renderSample(); };
@@ -263,10 +377,14 @@ $('play').onclick = () => {
   };
   animation = requestAnimationFrame(tick);
 };
-const actions = {roll:'Roll without slip', slide:'Slide beyond peak', load:'Double W0 load', burnout:'Stationary burnout', lock:'Locked-wheel slide', air:'Airborne', gap:'Telemetry gap', reset:'Reset experiment'};
+const actions = {roll:'Roll without slip', slide:'Slide beyond peak', load:'Double W0 load', burnout:'Stationary burnout', lock:'Locked-wheel slide', air:'Airborne', gap:'Telemetry gap', example:'Illustrative wear values', reset:'Reset experiment'};
 function act(kind) {
+  if (kind === 'example') { $('source').value = 'experiment'; recalculate(true); useIllustrativeWear(); return; }
   $('source').value = 'experiment';
-  if (kind === 'reset') experiment = [];
+  if (kind === 'reset') {
+    experiment = [];
+    for (const key of wearCalibrations.keys()) if (key.startsWith('experiment:')) wearCalibrations.delete(key);
+  }
   else if (kind === 'gap') {
     const time = (experiment.at(-1)?.time_ms || 0) + 1000;
     experiment.push({...syntheticFrame(time, 'slide'), boundary:'synthetic one-second telemetry gap'});
@@ -279,12 +397,14 @@ function act(kind) {
   recalculate(true);
 }
 for (const [kind, label] of Object.entries(actions)) {
+  if (kind === 'example') continue;
   const button = document.createElement('button'); button.textContent = label; button.onclick = () => act(kind); $('free-play').append(button);
 }
 const scenarios = [
   {name:'Motion', text:'Pure rolling adds no slip exposure. A stationary burnout and a locked-wheel slide both add stress despite one of their speed readings being zero.', steps:['roll','burnout','lock']},
   {name:'Load and contact', text:'Compare W0 with the other wheels after the loaded slide. W0 gains twice the rate. Airborne samples add no stress.', steps:['slide','load','air']},
   {name:'Missing data', text:'A gap starts a new segment at zero. It must not fabricate wear during the missing second. Return to the previous segment to inspect its total.', steps:['slide','gap','slide']},
+  {name:'Wear estimation', text:'Create sliding exposure, then apply arbitrary illustrative wear values. Extra load increases estimated wear; airborne samples add none. Real calibration still needs independent wear observations.', steps:['slide','example','load','air']},
 ];
 function walkthrough(index) {
   act('reset');
@@ -304,6 +424,10 @@ scenarios.forEach((scenario, i) => {
   const button = document.createElement('button'); button.textContent = scenario.name; button.setAttribute('role','tab'); button.setAttribute('aria-selected','false'); button.onclick = () => walkthrough(i); $('tabs').append(button);
 });
 if (recordingAvailable) recalculate();
-else walkthrough(0);
+else {
+  walkthrough(3);
+  $('walkthrough').querySelectorAll('button')[0].click();
+  $('walkthrough').querySelectorAll('button')[1].click();
+}
 </script>
 </html>

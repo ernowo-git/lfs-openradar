@@ -1,9 +1,10 @@
-# Tyre stress prototype
+# Tyre stress and wear estimation prototype
 
 Prototype branch: `prototype/tyre-stress-index`. The question is whether a
-per-wheel load, motion and combined-slip index behaves usefully enough to test
-against observed LFS tyre wear. This is an offline experiment, with no HUD,
-installed-binary replacement, configuration edits or additional dependencies.
+per-wheel load, motion and combined-slip index, converted through a configurable
+wear coefficient, behaves usefully enough to test against observed LFS tyre wear.
+This is an offline HTML experiment, generated separately from the main
+application. It adds no HUD gadget or additional dependencies.
 
 ## Open a report
 
@@ -15,7 +16,8 @@ cargo run --no-default-features --locked --example tyre-stress-prototype -- \
 ```
 
 Open `target/tyre-stress-report.html` in a browser. It contains the decoded data,
-chart, sample scrubber, editable wheel radii, telemetry table and synthetic guided
+stress and estimated-wear charts, per-wheel remaining-tread cards, sample scrubber,
+editable wheel radii, calibration controls, telemetry table and synthetic guided
 experiments. It needs no server or network connection. It refuses to overwrite
 an existing report; use another filename or explicitly remove your old output.
 Reports contain local driving telemetry, so review that before sharing them.
@@ -33,6 +35,45 @@ validates packet sequence, decoded source clocks and the footer count. Recover
 interrupted recordings with `--recover-recording` first. A recovered/incomplete
 file remains marked incomplete in its report. No recorded packet is resampled
 before integration; only the displayed chart is reduced for browser drawing.
+
+## Slip-angle telemetry
+
+Extended OutSim supplies a signed, dimensionless `TanSlipAngle` float for each
+of the four wheels: the **tangent of the tyre's lateral slip angle**. Slip angle
+describes the difference between the direction the wheel points and its motion
+over the road. It is separate from wheel steering angle and whole-car drift
+angle. The decoder preserves it as `Wheel::tan_slip_angle`.
+[Installed LFS specification](../../../Games/LFS/docs/OutSimPack.txt),
+[OpenRadar decoder](../src/lfs/outsim.rs).
+
+Convert the reported tangent to an angle using:
+
+```text
+slip_angle_rad = atan(TanSlipAngle)
+slip_angle_deg = atan(TanSlipAngle) * 180 / pi
+```
+
+| Reported tangent | Calculated principal angle |
+| --- | --- |
+| 0 | 0° |
+| ±0.1 | ±5.71° |
+| ±0.2 | ±11.31° |
+| ±0.5 | ±26.57° |
+| ±1.0 | ±45° |
+
+`atan` returns the principal angle between −90° and +90°. Tangent alone cannot
+distinguish directions separated by 180°, so it does not reconstruct a full
+wheel travel direction during reversing or spins. Positive/negative left-right
+meaning and wheel corner mapping still require live validation. Low-speed and
+airborne readings need care; do not treat them as evidence of meaningful tyre
+scrub without checking motion, ground contact and positive load.
+
+The prototype currently shows the **raw tangent** under **More telemetry at
+this sample**, alongside longitudinal `SlipRatio`, wheel rotation and forces.
+It does not yet display the converted angle in degrees. The stress/wear model
+uses the separately reported combined `SlipFraction`; it does not currently
+use `TanSlipAngle` as an independent wear term or infer tyre wear directly from
+the lateral slip angle.
 
 ## Index definition
 
@@ -68,6 +109,54 @@ state or wear multiplier is inferred. A later slip-energy model needs validated
 per-wheel slip velocities and compatible force coordinates before it can improve
 on this deliberately simple proxy.
 
+## Tyre-wear estimation
+
+Wear estimation is part of the prototype scope. For each wheel and uninterrupted
+segment, the linear empirical model is:
+
+```text
+loss_pp       = min(starting_remaining_percent, stress * wear_coefficient)
+remaining_pct = max(0, starting_remaining_percent - loss_pp)
+```
+
+The coefficient is in **percentage points of original tread per stress unit**.
+For example, 1,000 stress units at 0.01 pp/unit predict 10 pp of tread loss;
+starting at 80% then predicts 70% remaining. Loss is limited to the specified
+starting tread. If starting tread is unknown, the model can show loss (capped
+at 100 pp) while remaining tread stays unknown. A missing coefficient keeps
+both wear outputs unknown; zero is not accepted as a calibrated wear coefficient.
+
+The report's **Estimated tyre wear** section provides:
+
+- A wear coefficient and four independently editable starting-tread percentages.
+- **Use illustrative values**: an arbitrary demonstration coefficient of
+  `0.001 pp/unit` and an assumed 100% starting tread for all wheels in the selected
+  segment. The resulting percentages remain explicitly marked **ILLUSTRATIVE**,
+  including when they are applied to real recorded telemetry.
+- **Assume fresh tyres: 100%**, an explicit starting-state assumption which does
+  not supply a wear coefficient or assert that the game actually fitted tyres.
+- Per-wheel estimated loss and remaining tread at the sample cursor, plus chart
+  choices for remaining tread, tread loss and the underlying stress index.
+- A **Wear estimation** guided experiment, preloaded with illustrative estimates
+  in demo-only reports.
+
+Real recordings begin uncalibrated. Enter a coefficient fitted to independent
+wear observations, or click **Use illustrative values** to explore behavior.
+For a simple fit, divide observed tread loss in percentage points by the
+corresponding accumulated stress, then test on separate runs. User-supplied
+coefficients remain labeled unverified; typing a value cannot establish accuracy.
+
+Calibration inputs belong only to the selected segment. Moving across a gap or
+identity boundary does not carry a coefficient or assume fresh tyres. Returning
+to a previously configured segment restores its inputs. Changing nominal radii
+clears wear coefficients because it changes the stress scale; starting-tread
+observations are retained. Inputs live in page memory only and are not saved.
+
+This model is a first conversion of the exposure index, not an independently
+validated LFS wear law. It inherits zero-slip rolling wear omission, saturated
+slip severity and missing thermal/local-wear effects. A predicted 0% is a model
+limit and does not predict the game's puncture time.
+
 ## Boundaries and validation
 
 Recorded OutSim/global gaps, observed car/PLID identity changes, duplicate or
@@ -85,7 +174,9 @@ describe tread heat, and one scalar per wheel cannot reproduce local flat spots.
 The standalone model has a runnable `modelSelfCheck()` that executes when the
 report opens. It covers zero slip, contact/load gating, load scaling, burnout,
 lockup, radius sensitivity, unchanged response to temperature, clock rollover
-and discontinuities. These checks verify arithmetic and state handling only.
+and discontinuities. Wear checks cover conversion units, starting tread,
+missing calibration, unknown starting tread, per-wheel load response, depletion
+and invalid inputs. These checks verify arithmetic and state handling only.
 
 For the next experiment:
 
@@ -98,8 +189,9 @@ For the next experiment:
    uneven wear. Fit a wear conversion only if an independent wear reference is
    available, then validate it on separate runs.
 
-Current verdict: the prototype makes these comparisons possible. Predictive wear
-accuracy and wheel corner mapping remain unvalidated. Keep it on the prototype
+Current verdict: the prototype provides configurable tyre-wear estimates and
+makes these comparisons possible. Predictive wear accuracy and wheel corner
+mapping remain unvalidated. Keep it on the prototype
 branch until the experiment answers those questions; the production HUD does
 not yet have a tyre-wear or tyre-stress gadget.
 
