@@ -345,7 +345,7 @@ fn relative_uses_native_geometry_and_preserves_the_separate_window_layout() {
         .unwrap();
     assert!(geometry.enabled);
     assert_eq!(geometry.rect.min, eframe::egui::pos2(24.0, 80.0));
-    assert_eq!(geometry.rect.size(), eframe::egui::vec2(750.0, 450.0));
+    assert_eq!(geometry.rect.size(), eframe::egui::vec2(650.0, 450.0));
     let snapshot = lfs_openradar::runtime::Snapshot {
         relative: lfs_openradar::demo::relative_preview(),
         ..Default::default()

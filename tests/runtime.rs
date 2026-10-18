@@ -43,6 +43,9 @@ fn local_hud_commands_preserve_visibility_order_and_active_recording() {
             Err(e) => panic!("{e}"),
         }
     };
+    // Windows may inherit the listener's nonblocking mode. This handshake and
+    // command exchange use blocking reads with a bounded timeout.
+    tcp.set_nonblocking(false).unwrap();
     tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     tcp.read_exact(&mut [0; 44]).unwrap();
     let mut version = packet(2, 20);

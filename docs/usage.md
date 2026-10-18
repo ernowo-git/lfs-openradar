@@ -153,25 +153,25 @@ GT colors, cell sizes, borders, offsets, and type sizes are centralized in
 [`gt7_style.rs`](../src/overlay/gt7_style.rs). Gap windows use a base size of
 320 × 106 logical pixels, and delta uses 440 × 132 before your scale is applied.
 Roboto and Azeret Mono are embedded for this theme, with
-[font licenses](font-licenses.md) included in release archives. Radar's cosmetic
-vertical strip remains removed.
+[font licenses](font-licenses.md) included in release archives.
 
-The proximity radar follows the supplied animated reference: three arcs fading
-toward the top, a horizontal guide, compact
-directional markers, and a bottom **Radar** label. Marker size is configurable
-through `RADAR.proximity.marker_size` and scales with the radar window. The
-symbols show live car locations and headings; they are not physical car
-footprints. The arcs are decorative guides, not a track map or metre markings.
-The blue panel backing is disabled so the HUD floats over the game. Radar has
-a radial black-to-grey background, with **40% opacity at the centre** fading to
-**0% opacity at the outer circle**. Edit the colors and `center_opacity` /
-`edge_opacity` in `RADAR.proximity.background`; set it to `None` for a fully
-transparent radar background. Gap position/name rows and reference/live-delta
-cells use `CELL_BACKGROUND` in `gt7_style.rs`: neutral grey-black at 30% opacity.
-Gap interval rows fade from transparent to the same 30% backing. Radar sector
-size, fill opacity, outline, and warning colors are editable through
-`RADAR.proximity.side_warnings`: `inner_radius` controls thickness as a fraction
-of the outer circle, and `half_angle` controls half the angular span in radians.
+The proximity radar has a transparent background, a white centre marker and
+fading white crosshairs, with no title or filled disk. Nearby traffic is shown
+only by the warning bands, with no opponent arrows or dots. The white player
+marker size is set by `RADAR.proximity.marker_size` and scales with the radar
+window; it is not a physical car footprint.
+
+Warning bands follow each opponent's position ahead or behind on the correct
+side, fading at the circular sensor edge. Traffic directly ahead or behind
+lights a full-width cap. Yellow means nearby, red means alongside or potential
+contact; potential contact uses a thicker band. Delayed/uncertain telemetry
+uses muted warnings, and paused radar hides all warnings. Sensor geometry,
+opacity and colors live in `RADAR.proximity.warnings` in `gt7_style.rs`.
+These indicators use the existing telemetry and threat thresholds.
+
+Gap position/name rows and reference/live-delta cells use `CELL_BACKGROUND`
+in `gt7_style.rs`: neutral grey-black at 30% opacity. Gap interval rows fade
+from transparent to the same 30% backing.
 
 The current overlay renderer composites transparency without backdrop blur.
 Windows' documented [DWM system backdrop API](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type)

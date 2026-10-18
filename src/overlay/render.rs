@@ -4,9 +4,7 @@ use super::{
     delta_style::DeltaStyle,
     gadget_style::{CellStyle, PanelStyle, RowRule, TextFont, TextStyle},
     gap_style::GapStyle,
-    radar_style::{
-        ProximityStyle, RadarCarStyle, RadarStyle, RadialBackgroundStyle, SideWarningStyle,
-    },
+    radar_style::{ProximityStyle, RadarStyle, WarningStyle},
     theme,
 };
 use crate::{
@@ -483,97 +481,22 @@ pub(super) fn paint(
     let projection = radar_projection(panel, config, style);
     let RadarProjection {
         origin: centre,
-        metres_to_pixels: scale,
         ui_scale,
+        ..
     } = projection;
-    if style.center_band != Color32::TRANSPARENT {
+    if let Some(proximity) = &style.proximity {
+        paint_proximity_warnings(painter, panel, proximity, frame, &projection);
+        paint_proximity_guides(painter, panel, style, proximity, ui_scale);
+    }
+    if frame.live {
         painter.rect_filled(
             Rect::from_center_size(
                 centre,
-                Vec2::new(
-                    config.car_width_m as f32 * scale.x * 1.5,
-                    panel.height() - 55.0,
-                ),
+                style.proximity.as_ref().unwrap().marker_size * ui_scale,
             ),
-            0.0,
-            style.center_band,
-        );
-    }
-    if let Some(proximity) = &style.proximity {
-        paint_proximity_guides(painter, panel, style, proximity, ui_scale);
-        if let Some(warnings) = &proximity.side_warnings {
-            paint_side_warnings(painter, panel, proximity, frame, warnings, ui_scale);
-        }
-    } else {
-        let grid = Stroke::new(style.grid_width, style.grid_color);
-        for radius in [3.0, 6.0, 9.0] {
-            painter.circle_stroke(centre, radius * scale.x, grid);
-        }
-        painter.line_segment(
-            [
-                Pos2::new(panel.left() + 15.0, centre.y),
-                Pos2::new(panel.right() - 15.0, centre.y),
-            ],
-            grid,
-        );
-        painter.line_segment(
-            [
-                Pos2::new(centre.x, panel.top() + 30.0),
-                Pos2::new(centre.x, panel.bottom() - 25.0),
-            ],
-            grid,
-        );
-    }
-    if let Some(heading) = &style.heading {
-        let anchor = Rect::from_min_size(Pos2::new(centre.x, panel.top()), Vec2::ZERO);
-        paint_gadget_text(
-            painter,
-            anchor,
-            ui_scale,
-            heading,
-            style.proximity.as_ref().map_or("RADAR", |p| p.heading),
-        );
-    }
-    if frame.live {
-        for car in &frame.cars {
-            let car_style = if car.uncertain {
-                style.uncertain
-            } else {
-                match car.threat {
-                    Threat::Nearby => style.nearby,
-                    Threat::Alongside => style.alongside,
-                    Threat::PotentialContact => style.potential_contact,
-                }
-            };
-            let position = projection.position(car.right, car.forward);
-            draw_car(
-                painter,
-                position,
-                &projection,
-                car.relative_heading,
-                config,
-                car_style,
-                style,
-            );
-        }
-        draw_car(
-            painter,
-            centre,
-            &projection,
-            0.0,
-            config,
+            1.5 * ui_scale,
             style.player,
-            style,
         );
-        if let Some(label) = &style.player_label {
-            paint_gadget_text(
-                painter,
-                Rect::from_min_size(centre, Vec2::ZERO),
-                1.0,
-                label,
-                "YOU",
-            );
-        }
     } else {
         paint_gadget_text(
             painter,
@@ -594,92 +517,104 @@ pub(super) fn paint(
     }
 }
 
-fn side_warning_appearance(
-    frame: &RadarFrame,
-    style: &SideWarningStyle,
-) -> [Option<(Color32, f32)>; 2] {
-    let mut sides: [Option<(u8, Color32)>; 2] = [None, None];
-    if frame.live {
-        for car in &frame.cars {
-            let side = if car.right < -style.center_tolerance_m {
-                0
-            } else if car.right > style.center_tolerance_m {
-                1
-            } else {
-                continue;
-            };
-            let (priority, color) = if car.uncertain {
-                (0, style.uncertain)
-            } else {
-                match car.threat {
-                    Threat::Nearby => (1, style.nearby),
-                    Threat::Alongside => (2, style.alongside),
-                    Threat::PotentialContact => (3, style.contact),
-                }
-            };
-            if sides[side].is_none_or(|(current, _)| priority > current) {
-                sides[side] = Some((priority, color));
-            }
+fn warning_appearance(
+    car: &crate::radar::RadarCar,
+    frame_uncertain: bool,
+    style: &WarningStyle,
+) -> (u8, Color32) {
+    if frame_uncertain || car.uncertain {
+        (0, style.uncertain)
+    } else {
+        match car.threat {
+            Threat::Nearby => (1, style.nearby),
+            Threat::Alongside => (2, style.alongside),
+            Threat::PotentialContact => (3, style.contact),
         }
     }
-    sides.map(|side| {
-        side.map(|(priority, color)| {
-            let inner_radius = if priority == 3 {
-                style.contact_inner_radius
-            } else {
-                style.inner_radius
-            };
-            (color, inner_radius)
-        })
-    })
 }
 
-fn paint_side_warnings(
+fn paint_proximity_warnings(
     painter: &egui::Painter,
     panel: Rect,
     proximity: &ProximityStyle,
     frame: &RadarFrame,
-    style: &SideWarningStyle,
-    ui_scale: f32,
+    projection: &RadarProjection,
 ) {
-    let painter = painter.with_clip_rect(panel.intersect(painter.clip_rect()));
+    if !frame.live {
+        return;
+    }
+    let style = &proximity.warnings;
     let center = panel_point(panel, proximity.guide_center);
     let radius = panel.width().min(panel.height()) * proximity.guide_radius;
-    const SEGMENTS: u32 = 32;
-    for (side, appearance) in side_warning_appearance(frame, style)
-        .into_iter()
-        .enumerate()
-    {
-        let Some((color, inner_radius)) = appearance else {
-            continue;
-        };
-        let angle = if side == 0 { std::f32::consts::PI } else { 0.0 };
-        let mut mesh = egui::Mesh::default();
-        let mut outer = Vec::new();
-        let mut inner = Vec::new();
-        for step in 0..=SEGMENTS {
-            let theta =
-                angle - style.half_angle + 2.0 * style.half_angle * step as f32 / SEGMENTS as f32;
-            let direction = Vec2::new(theta.cos(), theta.sin());
-            let inside = center + direction * radius * inner_radius;
-            let outside = center + direction * radius;
-            mesh.colored_vertex(inside, color.gamma_multiply(style.fill_opacity));
-            mesh.colored_vertex(outside, color.gamma_multiply(style.fill_opacity));
-            inner.push(inside);
-            outer.push(outside);
+    // Draw stronger warnings last so a nearby car cannot obscure contact.
+    for priority in 0..=3 {
+        for car in frame
+            .cars
+            .iter()
+            .filter(|car| warning_appearance(car, frame.uncertain, style).0 == priority)
+        {
+            let (_, color) = warning_appearance(car, frame.uncertain, style);
+            let contact = priority == 3;
+            let height = radius
+                * if contact {
+                    style.contact_band_height
+                } else {
+                    style.band_height
+                };
+            let y = projection.position(car.right, car.forward).y;
+            let centered = car.right.abs() <= style.center_tolerance_m;
+            let (top, bottom) = if centered {
+                // A car on the centre line lights a cap ahead/behind, including
+                // contact directly nose-to-tail that the old side wedges missed.
+                if car.forward >= 0.0 {
+                    (center.y - radius, y.min(center.y - height * 0.5))
+                } else {
+                    (y.max(center.y + height * 0.5), center.y + radius)
+                }
+            } else {
+                (y - height * 0.5, y + height * 0.5)
+            };
+            let top = top.clamp(center.y - radius, center.y + radius);
+            let bottom = bottom.clamp(center.y - radius, center.y + radius);
+            if bottom <= top {
+                continue;
+            }
+            const ROWS: u32 = 24;
+            const COLUMNS: u32 = 8;
+            let mut mesh = egui::Mesh::default();
+            for row in 0..=ROWS {
+                let y = egui::lerp(top..=bottom, row as f32 / ROWS as f32);
+                let extent = (radius * radius - (y - center.y).powi(2)).max(0.0).sqrt();
+                let left = if centered || car.right < 0.0 {
+                    -extent
+                } else {
+                    0.0
+                };
+                let right = if centered || car.right > 0.0 {
+                    extent
+                } else {
+                    0.0
+                };
+                for column in 0..=COLUMNS {
+                    let x = egui::lerp(left..=right, column as f32 / COLUMNS as f32);
+                    let distance = x.hypot(y - center.y) / radius;
+                    let fade = ((1.0 - distance) / style.edge_fade).clamp(0.0, 1.0);
+                    mesh.colored_vertex(
+                        Pos2::new(center.x + x, y),
+                        color.gamma_multiply(style.fill_opacity * fade),
+                    );
+                }
+            }
+            for row in 0..ROWS {
+                for column in 0..COLUMNS {
+                    let index = row * (COLUMNS + 1) + column;
+                    let next = index + COLUMNS + 1;
+                    mesh.add_triangle(index, index + 1, next);
+                    mesh.add_triangle(index + 1, next + 1, next);
+                }
+            }
+            painter.add(Shape::mesh(mesh));
         }
-        for step in 0..SEGMENTS {
-            let index = step * 2;
-            mesh.add_triangle(index, index + 1, index + 3);
-            mesh.add_triangle(index, index + 3, index + 2);
-        }
-        painter.add(Shape::mesh(mesh));
-        let mut outline = outer;
-        outline.extend(inner.into_iter().rev());
-        painter.add(Shape::closed_line(
-            outline,
-            Stroke::new(style.border_width * ui_scale, color),
-        ));
     }
 }
 
@@ -706,7 +641,7 @@ fn radar_projection(panel: Rect, config: &Config, style: &RadarStyle) -> RadarPr
     let ui_scale = panel.width().min(panel.height()) / style.panel.size.x;
     let origin = panel_point(panel, proximity.origin);
     // Reserve symbol room before fitting each axis to its configured range.
-    // The rings follow the reference layout and do not represent track geometry.
+    // Sensor guides are decorative and do not represent physical car footprints.
     let padding = proximity.marker_size.length() * ui_scale * 0.5;
     // Match the engine's conservative range padding, including rotated footprints.
     let physical_padding = config.car_length_m.hypot(config.car_width_m) as f32 * 0.5;
@@ -730,174 +665,24 @@ fn paint_proximity_guides(
     proximity: &ProximityStyle,
     ui_scale: f32,
 ) {
-    let guide_center = panel_point(panel, proximity.guide_center);
-    let top = panel.top() + proximity.top * panel.height();
+    let center = panel_point(panel, proximity.origin);
     let radius = panel.width().min(panel.height()) * proximity.guide_radius;
-    if let Some(background) = &proximity.background {
-        let painter = painter.with_clip_rect(panel.intersect(painter.clip_rect()));
-        paint_radial_background(&painter, guide_center, radius, background);
-    }
-    let grid = Stroke::new(style.grid_width * ui_scale, style.grid_color);
-    for fraction in proximity.ring_fractions {
-        let radius = radius * fraction;
-        let angle = ((guide_center.y - top) / radius).clamp(0.0, 1.0).asin();
-        const SEGMENTS: usize = 96;
-        let point = |step: usize| {
-            let theta =
-                -angle + (std::f32::consts::PI + 2.0 * angle) * step as f32 / SEGMENTS as f32;
-            guide_center + Vec2::new(theta.cos(), theta.sin()) * radius
-        };
-        for step in 0..SEGMENTS {
-            let a = point(step);
-            let b = point(step + 1);
-            let opacity = (((a.y + b.y) * 0.5 - top) / (guide_center.y - top)).clamp(0.0, 1.0);
-            painter.line_segment(
-                [a, b],
-                Stroke::new(grid.width, grid.color.gamma_multiply(opacity)),
-            );
+    // White sensor crosshair with clear tips, matching the reference without
+    // adding a filled disk or decorative distance rings behind live traffic.
+    for axis in [Vec2::X, Vec2::Y] {
+        let mut mesh = egui::Mesh::default();
+        let half_width = axis.rot90() * style.grid_width * ui_scale * 0.5;
+        for (distance, opacity) in [(-0.78, 0.0), (-0.4, 1.0), (0.4, 1.0), (0.78, 0.0)] {
+            let point = center + axis * radius * distance;
+            let color = style.grid_color.gamma_multiply(opacity);
+            mesh.colored_vertex(point - half_width, color);
+            mesh.colored_vertex(point + half_width, color);
         }
-    }
-    painter.line_segment(
-        [
-            guide_center - Vec2::new(radius, 0.0),
-            guide_center + Vec2::new(radius, 0.0),
-        ],
-        grid,
-    );
-}
-
-fn radial_background_color(style: &RadialBackgroundStyle, distance: f32) -> Color32 {
-    let distance = distance.clamp(0.0, 1.0);
-    let interpolate = |center: f32, edge: f32| center + (edge - center) * distance;
-    let center = style.center_color.to_srgba_unmultiplied();
-    let edge = style.edge_color.to_srgba_unmultiplied();
-    // Interpolate RGB separately from alpha so a transparent gray edge still
-    // introduces gray along the fade, rather than premultiplied black throughout.
-    Color32::from_rgba_unmultiplied(
-        interpolate(center[0] as f32, edge[0] as f32).round() as u8,
-        interpolate(center[1] as f32, edge[1] as f32).round() as u8,
-        interpolate(center[2] as f32, edge[2] as f32).round() as u8,
-        (interpolate(style.center_opacity, style.edge_opacity).clamp(0.0, 1.0) * 255.0).round()
-            as u8,
-    )
-}
-
-fn paint_radial_background(
-    painter: &egui::Painter,
-    center: Pos2,
-    radius: f32,
-    style: &RadialBackgroundStyle,
-) {
-    const RINGS: u32 = 16;
-    const SEGMENTS: u32 = 64;
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(center, radial_background_color(style, 0.0));
-    for ring in 1..=RINGS {
-        let distance = ring as f32 / RINGS as f32;
-        let color = radial_background_color(style, distance);
-        for segment in 0..SEGMENTS {
-            let angle = std::f32::consts::TAU * segment as f32 / SEGMENTS as f32;
-            mesh.colored_vertex(
-                center + Vec2::new(angle.cos(), angle.sin()) * radius * distance,
-                color,
-            );
+        for index in [0, 2, 4] {
+            mesh.add_triangle(index, index + 1, index + 2);
+            mesh.add_triangle(index + 1, index + 3, index + 2);
         }
-    }
-    for segment in 0..SEGMENTS {
-        mesh.add_triangle(0, 1 + segment, 1 + (segment + 1) % SEGMENTS);
-    }
-    for ring in 1..RINGS {
-        let inner = 1 + (ring - 1) * SEGMENTS;
-        let outer = inner + SEGMENTS;
-        for segment in 0..SEGMENTS {
-            let next = (segment + 1) % SEGMENTS;
-            mesh.add_triangle(inner + segment, outer + segment, outer + next);
-            mesh.add_triangle(inner + segment, outer + next, inner + next);
-        }
-    }
-    painter.add(Shape::mesh(mesh));
-}
-
-fn draw_car(
-    painter: &egui::Painter,
-    centre: Pos2,
-    projection: &RadarProjection,
-    angle: f64,
-    _config: &Config,
-    style: &RadarCarStyle,
-    radar: &RadarStyle,
-) {
-    draw_arrow(
-        painter,
-        centre,
-        radar
-            .proximity
-            .as_ref()
-            .expect("GT radar geometry")
-            .marker_size
-            * projection.ui_scale,
-        angle,
-        &RadarCarStyle {
-            border_width: style.border_width * projection.ui_scale,
-            ..*style
-        },
-        radar.fill_brightness,
-    );
-}
-
-fn draw_arrow(
-    painter: &egui::Painter,
-    centre: Pos2,
-    size: Vec2,
-    angle: f64,
-    style: &RadarCarStyle,
-    brightness: f32,
-) {
-    let half_width = size.x * 0.5;
-    let height = size.y;
-    let side = height.hypot(half_width);
-    // Inset the triangle's edges, rather than scaling it, for an even inner border.
-    let inradius = half_width * height / (half_width + side);
-    let border = style.border_width.clamp(0.0, inradius);
-    let (sin, cos) = angle.sin_cos();
-    let transform = |points: [(f32, f32); 3]| {
-        points
-            .map(|(x, y)| {
-                centre
-                    + Vec2::new(
-                        x * cos as f32 - y * sin as f32,
-                        -(x * sin as f32 + y * cos as f32),
-                    )
-            })
-            .to_vec()
-    };
-    let fill = style.fill.gamma_multiply(brightness);
-    painter.add(Shape::convex_polygon(
-        transform([
-            (0.0, height * 0.5),
-            (-half_width, -height * 0.5),
-            (half_width, -height * 0.5),
-        ]),
-        if border > 0.0 {
-            style.border_color
-        } else {
-            fill
-        },
-        Stroke::NONE,
-    ));
-    if border > 0.0 && border < inradius {
-        let inner_half_width = half_width - border * (side + half_width) / height;
-        let tip = height * 0.5 - border * side / half_width;
-        let base = -height * 0.5 + border;
-        painter.add(Shape::convex_polygon(
-            transform([
-                (0.0, tip),
-                (-inner_half_width, base),
-                (inner_half_width, base),
-            ]),
-            fill,
-            Stroke::NONE,
-        ));
+        painter.add(Shape::mesh(mesh));
     }
 }
 
@@ -907,193 +692,82 @@ mod tests {
     use crate::config::HudStyle;
 
     #[test]
-    fn side_range_changes_horizontal_positions_throughout_gt_range() {
-        let ctx = egui::Context::default();
-        super::super::fonts::install(&ctx);
-        let frame = RadarFrame {
-            live: true,
-            cars: vec![crate::radar::RadarCar {
-                plid: 2,
-                name: "Opponent".into(),
-                right: 0.4,
-                forward: 2.0,
-                relative_heading: 0.0,
-                threat: Threat::Nearby,
-                uncertain: false,
-            }],
-            ..Default::default()
-        };
-        for hud in [HudStyle::Gt7Inspired] {
-            let style = theme::resolve(hud).radar;
-            for size in [220.0, 320.0, 800.0] {
-                let mut previous: Option<Vec2> = None;
-                for side in [0.0, 0.1, 1.0, 3.0, 5.0, 8.0, 9.0, 12.0] {
-                    let config = Config {
-                        hud_style: hud,
-                        side_m: side,
-                        ..Default::default()
-                    };
-                    config.validate().unwrap();
-                    let canvas = Rect::from_min_size(Pos2::ZERO, Vec2::splat(size));
-                    let projection = radar_projection(canvas.shrink(4.0), &config, style);
-                    let output = ctx.run(
-                        egui::RawInput {
-                            screen_rect: Some(canvas),
-                            ..Default::default()
-                        },
-                        |ctx| {
-                            paint(
-                                &ctx.layer_painter(egui::LayerId::background()),
-                                canvas,
-                                &frame,
-                                &config,
-                                true,
-                            );
-                        },
-                    );
-                    let marker_center = |car: &RadarCarStyle| {
-                        output
-                            .shapes
-                            .iter()
-                            .find_map(|shape| match &shape.shape {
-                                Shape::Path(path)
-                                    if path.fill
-                                        == car.fill.gamma_multiply(style.fill_brightness) =>
-                                {
-                                    Some(Rect::from_points(&path.points).center())
-                                }
-                                _ => None,
-                            })
-                            .unwrap()
-                    };
-                    let offset = marker_center(style.nearby) - marker_center(style.player);
-                    assert!(
-                        (offset - (projection.position(0.4, 2.0) - projection.origin)).length()
-                            < 0.001
-                    );
-                    assert!(offset.is_finite());
-                    if let Some(previous) = previous {
-                        assert!(
-                            offset.x < previous.x,
-                            "{hud:?}, size {size}, side {side}: horizontal zoom did not change"
-                        );
-                        assert!((offset.y - previous.y).abs() < 0.001);
-                    }
-                    previous = Some(offset);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn side_warnings_follow_relative_position_and_highest_live_threat() {
+    fn proximity_bands_follow_cars_fade_at_the_circle_and_handle_centerline_traffic() {
         let radar = theme::resolve(HudStyle::Gt7Inspired).radar;
-        let style = radar
-            .proximity
-            .as_ref()
-            .unwrap()
-            .side_warnings
-            .as_ref()
-            .unwrap();
-        let car = |right, threat, uncertain| crate::radar::RadarCar {
-            plid: 1,
-            name: "Opponent".into(),
-            right,
-            forward: 0.0,
-            relative_heading: 0.0,
-            threat,
-            uncertain,
-        };
-        let mut frame = RadarFrame {
-            live: true,
-            ..Default::default()
-        };
-        assert_eq!(side_warning_appearance(&frame, style), [None, None]);
-        frame.cars = vec![car(-2.0, Threat::Nearby, false)];
-        assert_eq!(
-            side_warning_appearance(&frame, style),
-            [Some((style.nearby, style.inner_radius)), None]
-        );
-        frame.cars.extend([
-            car(-1.0, Threat::PotentialContact, false),
-            car(-3.0, Threat::Alongside, false),
-            car(2.0, Threat::Alongside, false),
-            car(0.0, Threat::PotentialContact, false),
-            car(2.0, Threat::PotentialContact, true),
-        ]);
-        assert_eq!(
-            side_warning_appearance(&frame, style),
-            [
-                Some((style.contact, style.contact_inner_radius)),
-                Some((style.alongside, style.inner_radius))
-            ]
-        );
-        frame.cars = vec![car(2.0, Threat::PotentialContact, true)];
-        assert_eq!(
-            side_warning_appearance(&frame, style),
-            [None, Some((style.uncertain, style.inner_radius))]
-        );
-        frame.live = false;
-        assert_eq!(side_warning_appearance(&frame, style), [None, None]);
-        for opponent in [radar.nearby, radar.alongside, radar.potential_contact] {
-            assert_eq!(opponent.border_color, radar.nearby.border_color);
-        }
-    }
-
-    #[test]
-    fn contact_side_warning_expands_inward_on_either_side() {
-        let proximity = theme::resolve(HudStyle::Gt7Inspired)
-            .radar
-            .proximity
-            .as_ref()
-            .unwrap();
-        let style = proximity.side_warnings.as_ref().unwrap();
-        assert!(style.contact_inner_radius < style.inner_radius);
+        let proximity = radar.proximity.as_ref().unwrap();
+        let style = &proximity.warnings;
         let ctx = egui::Context::default();
+        let config = Config::default();
         for size in [220.0, 640.0] {
             let panel = Rect::from_min_size(Pos2::ZERO, Vec2::splat(size));
+            let projection = radar_projection(panel, &config, radar);
             let center = panel_point(panel, proximity.guide_center);
             let radius = size * proximity.guide_radius;
-            for right in [-2.0, 2.0] {
-                for (threat, uncertain, inner_radius) in [
-                    (Threat::Nearby, false, style.inner_radius),
-                    (Threat::Alongside, false, style.inner_radius),
-                    (Threat::PotentialContact, false, style.contact_inner_radius),
-                    (Threat::PotentialContact, true, style.inner_radius),
+            for (right, forward) in [(-2.0, 3.0), (2.0, -3.0), (0.0, 6.0), (0.0, -6.0)] {
+                for (threat, uncertain, frame_uncertain, color) in [
+                    (Threat::Nearby, false, false, style.nearby),
+                    (Threat::Alongside, false, false, style.alongside),
+                    (Threat::PotentialContact, false, false, style.contact),
+                    (Threat::PotentialContact, true, false, style.uncertain),
+                    (Threat::PotentialContact, false, true, style.uncertain),
                 ] {
-                    let frame = RadarFrame {
+                    let car = crate::radar::RadarCar {
+                        plid: 1,
+                        name: "Opponent".into(),
+                        right,
+                        forward,
+                        relative_heading: 0.0,
+                        threat,
+                        uncertain,
+                    };
+                    let (priority, actual_color) = warning_appearance(&car, frame_uncertain, style);
+                    assert_eq!(actual_color, color);
+                    assert_eq!(priority == 0, uncertain || frame_uncertain);
+                    let mut frame = RadarFrame {
                         live: true,
-                        cars: vec![crate::radar::RadarCar {
-                            plid: 1,
-                            name: "Opponent".into(),
-                            right,
-                            forward: 0.0,
-                            relative_heading: 0.0,
-                            threat,
-                            uncertain,
-                        }],
+                        uncertain: frame_uncertain,
+                        cars: vec![car],
                         ..Default::default()
                     };
-                    let output = ctx.run(egui::RawInput::default(), |ctx| {
-                        paint_side_warnings(
-                            &ctx.layer_painter(egui::LayerId::background()),
-                            panel,
-                            proximity,
-                            &frame,
-                            style,
-                            size / 320.0,
-                        );
-                    });
+                    let draw = |frame: &RadarFrame| {
+                        ctx.run(egui::RawInput::default(), |ctx| {
+                            paint_proximity_warnings(
+                                &ctx.layer_painter(egui::LayerId::background()),
+                                panel,
+                                proximity,
+                                frame,
+                                &projection,
+                            );
+                        })
+                    };
+                    let output = draw(&frame);
                     let Shape::Mesh(mesh) = &output.shapes[0].shape else {
                         panic!("expected warning mesh");
                     };
-                    for pair in mesh.vertices.as_chunks::<2>().0 {
+                    assert!(mesh.is_valid());
+                    assert!(mesh.vertices.iter().all(|vertex| {
+                        let offset = vertex.pos - center;
+                        offset.length() <= radius + 0.001
+                            && (right == 0.0 || offset.x * right as f32 >= -0.001)
+                    }));
+                    let bounds =
+                        Rect::from_points(&mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>());
+                    if right == 0.0 {
+                        assert!(bounds.left() < center.x && bounds.right() > center.x);
+                        assert!((bounds.center().y - center.y) * (forward as f32) < 0.0);
+                    } else {
                         assert!(
-                            ((pair[0].pos - center).length() - radius * inner_radius).abs() < 0.001
+                            (bounds.center().y - projection.position(right, forward).y).abs()
+                                < 0.001
                         );
-                        assert!(((pair[1].pos - center).length() - radius).abs() < 0.001);
-                        assert_eq!((pair[0].pos.x - center.x).signum(), (right as f32).signum());
                     }
+                    assert!(mesh.vertices.iter().any(|v| v.color.a() == 0));
+                    assert!(mesh.vertices.iter().any(|v| v.color.a() > 100));
+                    frame.live = false;
+                    assert!(draw(&frame).shapes.is_empty());
+                    frame.live = true;
+                    frame.cars.clear();
+                    assert!(draw(&frame).shapes.is_empty());
                 }
             }
         }
@@ -1132,33 +806,52 @@ mod tests {
     }
 
     #[test]
-    fn radial_background_fades_through_grey_to_a_clear_edge() {
-        let background = theme::resolve(HudStyle::Gt7Inspired)
-            .radar
-            .proximity
-            .as_ref()
-            .unwrap()
-            .background
-            .as_ref()
-            .unwrap();
-        let center = radial_background_color(background, 0.0);
-        let middle = radial_background_color(background, 0.5);
-        let edge = radial_background_color(background, 1.0);
-        assert_eq!(center.to_srgba_unmultiplied(), [0, 0, 0, 102]);
-        assert_eq!(middle.a(), 51);
-        let rgb = middle.to_srgba_unmultiplied();
-        assert!((45..=51).contains(&rgb[0]));
-        assert_eq!(rgb[0], rgb[1]);
-        assert_eq!(rgb[1], rgb[2]);
-        assert_eq!(edge, Color32::TRANSPARENT);
+    fn empty_live_radar_has_only_clear_crosshairs_and_a_white_player_marker() {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            paint(
+                &ctx.layer_painter(egui::LayerId::background()),
+                Rect::from_min_size(Pos2::ZERO, Vec2::splat(320.0)),
+                &RadarFrame {
+                    live: true,
+                    ..Default::default()
+                },
+                &Config::default(),
+                true,
+            );
+        });
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, Shape::Text(_)))
+        );
+        assert_eq!(
+            output
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape, Shape::Mesh(_)))
+                .count(),
+            2
+        );
+        assert!(output.shapes.iter().all(|s| match &s.shape {
+            Shape::Mesh(mesh) => mesh.vertices.iter().all(|v| {
+                v.color == Color32::TRANSPARENT
+                    || v.color == theme::resolve(HudStyle::Gt7Inspired).radar.grid_color
+            }),
+            Shape::Rect(rect) =>
+                rect.fill == Color32::TRANSPARENT
+                    || rect.fill == theme::resolve(HudStyle::Gt7Inspired).radar.player,
+            Shape::Noop => true,
+            _ => false,
+        }));
     }
 
     #[test]
-    fn proximity_radar_keeps_live_coordinates_and_compact_symbols_inside_the_panel() {
+    fn live_radar_shows_warnings_and_only_the_player_marker_at_all_sizes() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
         let style = theme::resolve(HudStyle::Gt7Inspired).radar;
-        assert_eq!(style.center_band, Color32::TRANSPARENT);
         for size in [220.0, 320.0, 800.0] {
             for side in [0.0, 0.1, 3.0, 5.0, 12.0] {
                 let config = Config {
@@ -1198,45 +891,43 @@ mod tests {
                         );
                     },
                 );
-                let arrow = |color| {
+                let markers: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::Rect(rect) if rect.fill != Color32::TRANSPARENT => Some(rect),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(markers.len(), 1, "only the player has a marker");
+                let player = markers[0];
+                assert_eq!(player.fill, style.player);
+                assert!(player.rect.center().distance(projection.origin) < 0.001);
+                let proximity = style.proximity.as_ref().unwrap();
+                assert!(
+                    (player.rect.size() - proximity.marker_size * projection.ui_scale).length()
+                        < 0.001
+                );
+                assert!(panel.contains_rect(player.rect));
+                assert!(
+                    !output.shapes.iter().any(|shape| matches!(
+                        &shape.shape,
+                        Shape::Path(_) | Shape::Circle(_) | Shape::Ellipse(_)
+                    )),
+                    "opponents must not have arrows, dots, or other symbols"
+                );
+                // Two crosshair meshes plus the live opponent's warning band.
+                assert_eq!(
                     output
                         .shapes
                         .iter()
-                        .find_map(|shape| match &shape.shape {
-                            Shape::Path(path) if path.points.len() == 3 && path.fill == color => {
-                                Some(Rect::from_points(&path.points))
-                            }
-                            _ => None,
-                        })
-                        .unwrap()
-                };
-                let player = arrow(style.player.border_color);
-                let opponent = arrow(style.nearby.border_color);
-                assert!(player.center().distance(projection.origin) < 0.001);
-                let offset = opponent.center() - player.center();
-                assert!((offset.x / 2.0 - projection.metres_to_pixels.x).abs() < 0.001);
-                assert!((-offset.y / 3.0 - projection.metres_to_pixels.y).abs() < 0.001);
-                let proximity = style.proximity.as_ref().unwrap();
-                assert!(
-                    (player.size() - proximity.marker_size * projection.ui_scale).length() < 0.001
+                        .filter(|shape| matches!(&shape.shape, Shape::Mesh(_)))
+                        .count(),
+                    3
                 );
-                assert!(panel.contains_rect(player) && panel.contains_rect(opponent));
-                let caption = output
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        Shape::Text(text) if text.galley.job.text == "Radar" => {
-                            Some(text.visual_bounding_rect())
-                        }
-                        _ => None,
-                    })
-                    .unwrap();
-                assert!(
-                    caption.top()
-                        > panel.top()
-                            + (proximity.guide_center.y + proximity.guide_radius) * panel.height()
-                );
-                assert!(panel.contains_rect(caption));
+                assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+                    Shape::Text(text) if text.galley.job.text == "Radar"
+                )));
                 for shape in &output.shapes {
                     if let Shape::Path(path) = &shape.shape {
                         assert!(
@@ -1244,10 +935,6 @@ mod tests {
                                 .iter()
                                 .all(|point| panel.expand(0.01).contains(*point))
                         );
-                        if path.points.len() == 2 {
-                            // The reference has a horizontal guide, with no vertical axis/strip.
-                            assert!((path.points[0].x - path.points[1].x).abs() > 0.001);
-                        }
                     }
                 }
                 let mut vertices = 0;
@@ -1440,71 +1127,6 @@ mod tests {
                                 );
                             }
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn rotated_arrow_borders_stay_inside_the_car_footprint() {
-        let ctx = egui::Context::default();
-        super::super::fonts::install(&ctx);
-        let size = Vec2::new(18.0, 42.0);
-        let centre = Pos2::new(100.0, 100.0);
-        for angle in [0.0, 0.7, std::f64::consts::FRAC_PI_2, std::f64::consts::PI] {
-            for width in [0.0, 1.5, 1000.0] {
-                let style = RadarCarStyle {
-                    border_width: width,
-                    ..*theme::resolve(HudStyle::Gt7Inspired).radar.nearby
-                };
-                let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw_arrow(
-                        &ctx.layer_painter(egui::LayerId::background()),
-                        centre,
-                        size,
-                        angle,
-                        &style,
-                        1.0,
-                    );
-                });
-                let paths: Vec<_> = output
-                    .shapes
-                    .iter()
-                    .filter_map(|shape| match &shape.shape {
-                        Shape::Path(path) => Some(path),
-                        _ => None,
-                    })
-                    .collect();
-                assert!(!paths.is_empty());
-                let outer = &paths[0].points;
-                for path in &paths {
-                    assert!(path.points.iter().all(|p| p.is_finite()));
-                }
-                if width == 1.5 {
-                    assert_eq!(paths.len(), 2);
-                    for point in &paths[1].points {
-                        for edge in 0..3 {
-                            let a = outer[edge];
-                            let b = outer[(edge + 1) % 3];
-                            let direction = b - a;
-                            let relative = *point - a;
-                            let distance = (direction.x * relative.y - direction.y * relative.x)
-                                .abs()
-                                / direction.length();
-                            assert!(
-                                distance >= width - 0.001,
-                                "inner border escapes rotated triangle"
-                            );
-                        }
-                    }
-                } else {
-                    assert_eq!(paths.len(), 1);
-                }
-                for primitive in ctx.tessellate(output.shapes, output.pixels_per_point) {
-                    if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive {
-                        assert!(mesh.is_valid());
-                        assert!(mesh.vertices.iter().all(|vertex| vertex.pos.is_finite()));
                     }
                 }
             }

@@ -3,7 +3,7 @@ use super::{fonts, gt7_style as gt};
 use crate::relative::RelativeFrame;
 use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Rect, Stroke, Vec2};
 
-pub(super) const SIZE: Vec2 = Vec2::new(600.0, 360.0);
+pub(super) const SIZE: Vec2 = Vec2::new(520.0, 360.0);
 fn clock(ms: u64) -> String {
     format!(
         "{:02}:{:02}:{:02}",
@@ -45,7 +45,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
         220.0,
     );
     text(
-        588.0,
+        508.0,
         17.0,
         Align2::RIGHT_CENTER,
         "EST. GAP".into(),
@@ -62,7 +62,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
             gt::CELL_BACKGROUND
         };
         painter.rect_filled(
-            Rect::from_min_max(point(0.0, top), point(600.0, top + 37.0)),
+            Rect::from_min_max(point(0.0, top), point(SIZE.x, top + 37.0)),
             0.0,
             background,
         );
@@ -99,11 +99,11 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
             22.0,
             false,
             color,
-            310.0,
+            230.0,
         );
         if row.pit {
             text(
-                432.0,
+                352.0,
                 top + 19.0,
                 Align2::RIGHT_CENTER,
                 "PIT".into(),
@@ -115,7 +115,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
         }
         if row.lap_difference != 0 {
             text(
-                495.0,
+                415.0,
                 top + 19.0,
                 Align2::RIGHT_CENTER,
                 format!(
@@ -130,7 +130,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
             );
         }
         text(
-            588.0,
+            508.0,
             top + 19.0,
             Align2::RIGHT_CENTER,
             row.seconds.map_or("—".into(), |s| format!("{s:.1}")),
@@ -159,7 +159,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
         16.0,
         false,
         gt::WHITE,
-        390.0,
+        310.0,
     );
     let lap = frame.current_lap.map_or("—".into(), |lap| lap.to_string());
     let total = frame
@@ -168,7 +168,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
         .or_else(|| frame.projected_laps.map(|n| format!(" / ~{n:.1}")))
         .unwrap_or_default();
     text(
-        588.0,
+        508.0,
         317.0,
         Align2::RIGHT_CENTER,
         format!("Lap {lap}{total}"),
@@ -185,7 +185,7 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
         13.0,
         false,
         gt::MUTED,
-        576.0,
+        496.0,
     );
 }
 

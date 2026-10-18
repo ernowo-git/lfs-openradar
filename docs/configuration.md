@@ -112,7 +112,7 @@ scale = 1.0
 ```
 
 Window and native Wayland positions/scales remain separate. Scales accept
-0.5–2.0. The panel is 600 × 360 logical pixels before scaling. See
+0.5–2.0. The panel is 520 × 360 logical pixels before scaling. See
 [Relative usage](usage.md#relative) for gaps, session timing, and reliability.
 
 ## InSim password

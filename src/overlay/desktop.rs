@@ -3897,7 +3897,10 @@ mod tests {
         // or running another control-panel pass.
         data.lock().unwrap().source = OverlaySource::Demo(Arc::new(Mutex::new(Demo::default())));
         let live = draw_child();
-        assert!(contains_text(&live, "Radar"));
+        assert!(!contains_text(&live, "Radar"));
+        assert!(live.shapes.iter().any(
+            |s| matches!(&s.shape, Shape::Rect(rect) if rect.fill == super::super::gt7_style::WHITE)
+        ));
         assert!(!contains_text(&live, "RADAR PAUSED"));
 
         // A disconnect must propagate just as promptly, without bypassing the
@@ -3906,7 +3909,7 @@ mod tests {
         let paused = draw_child();
         assert!(contains_text(&paused, "RADAR PAUSED"));
         assert!(paused.viewport_output[&id].repaint_delay <= Duration::from_millis(16));
-        assert!(contains_text(&draw_child(), "Radar"));
+        assert!(!contains_text(&draw_child(), "Radar"));
         assert_eq!(ctx.cumulative_pass_nr_for(ViewportId::ROOT), parent_passes);
 
         data.lock().unwrap().visible = false;
