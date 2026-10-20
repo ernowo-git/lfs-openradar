@@ -16,13 +16,18 @@ use std::{
 struct Directory(PathBuf);
 impl Directory {
     fn new() -> Self {
+        Self::at(SystemTime::now())
+    }
+
+    fn at(time: SystemTime) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        // Windows can return the same timestamp to concurrent tests.
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "openradar-recording-{}-{}",
+            "openradar-recording-{}-{}-{sequence}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            time.duration_since(UNIX_EPOCH).unwrap().as_nanos()
         ));
         fs::create_dir(&path).unwrap();
         Self(path)
@@ -33,6 +38,15 @@ impl Drop for Directory {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+#[test]
+fn recording_directories_are_unique_with_the_same_timestamp() {
+    let first = Directory::at(UNIX_EPOCH);
+    let second = Directory::at(UNIX_EPOCH);
+    assert_ne!(first.0, second.0);
+    assert!(first.0.is_dir() && second.0.is_dir());
+}
+
 fn events(path: &std::path::Path) -> Vec<Event> {
     fs::read_to_string(path)
         .unwrap()
