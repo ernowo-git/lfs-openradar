@@ -40,6 +40,7 @@ impl Gadget {
             Self::LapRecords => Some(&mut config.lap_records),
             Self::LapLog => Some(&mut config.lap_log),
             Self::Relative => Some(&mut config.relative),
+            Self::GForce => Some(&mut config.g_force),
         }
     }
     pub fn placement(self, config: &Config) -> &GadgetPlacement {
@@ -53,6 +54,7 @@ impl Gadget {
             Self::LapRecords => &config.wayland.lap_records,
             Self::LapLog => &config.wayland.lap_log,
             Self::Relative => &config.wayland.relative,
+            Self::GForce => &config.wayland.g_force,
         }
     }
     pub fn placement_mut(self, config: &mut Config) -> &mut GadgetPlacement {
@@ -66,6 +68,7 @@ impl Gadget {
             Self::LapRecords => &mut config.wayland.lap_records,
             Self::LapLog => &mut config.wayland.lap_log,
             Self::Relative => &mut config.wayland.relative,
+            Self::GForce => &mut config.wayland.g_force,
         }
     }
 }
@@ -104,6 +107,8 @@ pub struct OverlaySession {
     pub(crate) show: bool,
     /// Temporary visibility overrides; excluded from saved configuration.
     pub hidden_gadgets: BTreeSet<Gadget>,
+    /// Temporary position-mode override; excluded from saved configuration.
+    pub radar_editing: bool,
     error: Option<String>,
     outputs: Vec<Monitor>,
     ready: bool,
@@ -162,9 +167,13 @@ impl OverlaySession {
                 }
                 let painter = painter.with_clip_rect(geometry.rect);
                 match geometry.gadget {
-                    Gadget::Radar => {
-                        paint(&painter, geometry.rect, &snapshot.frame, &config, false)
-                    }
+                    Gadget::Radar => paint(
+                        &painter,
+                        geometry.rect,
+                        &snapshot.frame,
+                        &config,
+                        self.radar_editing,
+                    ),
                     Gadget::Ahead => paint_gap(
                         &painter,
                         geometry.rect,
@@ -198,6 +207,12 @@ impl OverlaySession {
                     Gadget::Relative => {
                         super::relative_style::paint(&painter, geometry.rect, &snapshot.relative)
                     }
+                    Gadget::GForce => super::g_force_style::paint(
+                        &painter,
+                        geometry.rect,
+                        &snapshot.g_force,
+                        config.g_force_range_g,
+                    ),
                     Gadget::LapLog => {
                         super::lap_log_style::paint(&painter, geometry.rect, &snapshot.lap_log)
                     }
@@ -215,6 +230,7 @@ impl OverlaySession {
             config,
             show,
             hidden_gadgets: BTreeSet::new(),
+            radar_editing: false,
             error: None,
             outputs: Vec::new(),
             ready: false,
@@ -289,6 +305,7 @@ impl OverlaySession {
             super::lap_records_style::SIZE,
             super::lap_log_style::SIZE,
             super::relative_style::SIZE,
+            super::g_force_style::SIZE,
         ];
         let enabled_flags = [
             self.config.radar_enabled,
@@ -300,6 +317,7 @@ impl OverlaySession {
             self.config.lap_records.enabled,
             self.config.lap_log.enabled,
             self.config.relative.enabled,
+            self.config.g_force.enabled,
         ];
         let mut gadgets = Vec::new();
         if available {
@@ -313,6 +331,7 @@ impl OverlaySession {
                 Gadget::LapRecords,
                 Gadget::LapLog,
                 Gadget::Relative,
+                Gadget::GForce,
             ]
             .into_iter()
             .enumerate()
@@ -343,6 +362,10 @@ impl OverlaySession {
                     Gadget::Fuel => Vec2::new(24.0, logical_size.y - size.y - 24.0),
                     Gadget::LapRecords => Vec2::new(logical_size.x - size.x - 24.0, 24.0),
                     Gadget::Relative => Vec2::new(24.0, (logical_size.y - size.y) / 2.0),
+                    Gadget::GForce => Vec2::new(
+                        (logical_size.x - size.x) / 2.0,
+                        (logical_size.y - size.y) / 2.0,
+                    ),
                     Gadget::LapLog => Vec2::new(
                         logical_size.x - size.x - 24.0,
                         24.0 + sizes[6].y * self.config.wayland.lap_records.scale + 8.0,

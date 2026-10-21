@@ -25,8 +25,8 @@ fn indicator(frame: &FuelFrame) -> Indicator {
             .laps
             .filter(|laps| laps.is_finite() && *laps >= 0.0)
         {
-            Some(laps) if laps <= 1.0 => Indicator::Danger,
-            Some(laps) if laps <= 2.0 => Indicator::Warning,
+            Some(laps) if laps < 2.0 => Indicator::Danger,
+            Some(laps) if laps < 4.0 => Indicator::Warning,
             Some(_) => Indicator::Safe,
             None => Indicator::Unknown,
         }
@@ -256,9 +256,13 @@ mod tests {
         frame.low_fuel = Some(true); // Badge uses lap range, not LFS's warning lamp.
         for (laps, expected) in [
             (12.9, Indicator::Safe),
-            (2.0001, Indicator::Safe),
+            (4.0001, Indicator::Safe),
+            (4.0, Indicator::Safe),
+            (3.9999, Indicator::Warning),
+            (2.0001, Indicator::Warning),
             (2.0, Indicator::Warning),
-            (1.0001, Indicator::Warning),
+            (1.9999, Indicator::Danger),
+            (1.0001, Indicator::Danger),
             (1.0, Indicator::Danger),
             (0.0, Indicator::Danger),
         ] {
@@ -286,7 +290,7 @@ mod tests {
             let mut preview = crate::demo::fuel_preview();
             preview.rows[0].laps = Some(match state {
                 Indicator::Safe => 12.9,
-                Indicator::Warning => 1.5,
+                Indicator::Warning => 3.0,
                 Indicator::Danger => 0.5,
                 Indicator::Unknown => unreachable!(),
             });

@@ -1,7 +1,7 @@
 # lfs-openradar
 
 OpenRadar supports LFS 0.8C29. It is a standalone overlay for Live for Speed with a proximity radar,
-a speed and indicator dashboard, fuel range and refuelling estimates,
+a speed and indicator dashboard, a G-force meter, fuel range and refuelling estimates,
 estimated gaps to the cars ahead and behind,
 and a real-time performance delta
 against your best clean lap in the current session. Each gadget has its own
@@ -22,6 +22,7 @@ primary platform; Linux/X11 support is experimental.
 
 - [Local OutSim/OutGauge recording, with an optional InSim connection](docs/local-recording.md)
 - Proximity radar
+- [G-force meter with a fading trail and measured peaks](docs/usage.md#g-force-meter)
 - [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
 - [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)
 - [Per-track/car PB lap splits and independent best sectors](docs/usage.md#lap-records)
@@ -30,11 +31,31 @@ primary platform; Linux/X11 support is experimental.
 - [Session lap-time log with session best and previous-lap deltas](docs/usage.md#lap-time-log)
 - Lap performance delta
 
-## Quick preview
+## Gadget showcase
 
-<a href="https://youtu.be/zHja2vsNfss"><img src="https://img.youtube.com/vi/zHja2vsNfss/hqdefault.jpg" alt="Watch OpenRadar in action" width="100%"></a>
-
-[Watch OpenRadar in action on YouTube](https://youtu.be/zHja2vsNfss).
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <strong>G-force meter</strong><br><br>
+      <img src="assets/showcase/g-force.gif" alt="G-force meter with a yellow live dot, fading trail, and measured peak outline" width="320">
+    </td>
+    <td width="50%" align="center">
+      <strong>Speed dashboard</strong><br><br>
+      <img src="assets/showcase/speed-dashboard.gif" alt="Speed dashboard showing speed, gear, RPM, and warning indicators" width="320">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <strong>Relative</strong><br><br>
+      <img src="assets/showcase/relative.gif" alt="Relative gadget showing nearby drivers, estimated gaps, and session timing" width="320">
+    </td>
+    <td width="50%" align="center">
+      <strong>and more...</strong><br><br>
+      <a href="https://youtu.be/zHja2vsNfss">Check the YouTube demo here</a><br>
+      <sub>Older version</sub>
+    </td>
+  </tr>
+</table>
 
 ## Quick Setup
 
@@ -42,8 +63,6 @@ primary platform; Linux/X11 support is experimental.
 2. In **Settings → LFS startup setup**, select your LFS folder and click **Enable InSim at startup**, **Configure OutSim**, and **Configure OutGauge**.
 3. Start LFS, click **Apply / reconnect**, enable **Show overlays**, and drive your car.
 4. Enable your gadgets, use **Position mode** to place them, then turn it off and click **Save settings**.
-
-<img src="assets/quick-setup.gif" alt="Short tutorial showing how to set up OpenRadar for Live for Speed" width="100%">
 
 See the [installation guide](docs/installation.md) for details.
 

@@ -195,6 +195,7 @@ impl Demo {
             lap_records: lap_records_preview(),
             lap_log: lap_log_preview(),
             relative: relative_preview(),
+            g_force: g_force_preview(now),
             version: "synthetic".into(),
             frame,
             mci_sets: self.engine.mci_sets,
@@ -202,6 +203,34 @@ impl Demo {
             rejected_outsim: self.engine.rejected_outsim,
             ..Default::default()
         }
+    }
+}
+
+/// Synthetic horizontal acceleration for the G-meter; never used for live data.
+pub fn g_force_preview(now: u64) -> crate::g_force::GForceFrame {
+    let value = |at: u64| {
+        let t = at as f32 / 1000.0;
+        [1.1 * t.sin(), 0.8 * (t * 1.7).cos()]
+    };
+    crate::g_force::GForceFrame {
+        current: Some(value(now)),
+        trail: (0..=60)
+            .map(|i| {
+                let age = i * 25;
+                (value(now.saturating_sub(age)), age)
+            })
+            .collect(),
+        outline: (0..72)
+            .map(|i| {
+                let angle = i as f32 * std::f32::consts::TAU / 72.0;
+                Some([
+                    1.4 * angle.cos(),
+                    if angle.sin() > 0.0 { 1.1 } else { 0.65 } * angle.sin(),
+                ])
+            })
+            .collect(),
+        peak_g: 1.4,
+        status: "Synthetic G-meter preview".into(),
     }
 }
 

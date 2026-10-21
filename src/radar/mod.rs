@@ -452,20 +452,21 @@ impl Engine {
         self.fuel
             .frame(now, config, self.dashboard_player().is_some())
     }
-    pub fn outsim(&mut self, sample: Sample, time: u64, config: &Config) {
+    /// Returns whether the sample was associated with the selected car.
+    pub fn outsim(&mut self, sample: Sample, time: u64, config: &Config) -> bool {
         self.association_stale_ms = config.stale_ms;
         self.outsim_samples += 1;
         let Some(id) = self.selected else {
             self.rejected_outsim += 1;
-            return;
+            return false;
         };
         let Some(latest) = self.snapshots.back() else {
             self.rejected_outsim += 1;
-            return;
+            return false;
         };
         let Some(local) = latest.cars.iter().find(|c| c.plid == id) else {
             self.rejected_outsim += 1;
-            return;
+            return false;
         };
         if time.saturating_sub(latest.time) > config.stale_ms
             || local.pose.distance(sample.pose) > 12.0
@@ -476,7 +477,7 @@ impl Engine {
             self.poses.clear();
             self.outsim_clock = None;
             self.rejected_outsim += 1;
-            return;
+            return false;
         }
         if let Some(previous) = self.outsim_clock {
             let delta = sample.time_ms.wrapping_sub(previous);
@@ -488,7 +489,7 @@ impl Engine {
                     .is_none_or(|p| time.saturating_sub(p.time) <= config.hide_ms)
                 {
                     self.rejected_outsim += 1;
-                    return;
+                    return false;
                 }
                 self.poses.clear();
                 self.delta
@@ -513,6 +514,7 @@ impl Engine {
         while self.poses.len() > 128 {
             self.poses.pop_front();
         }
+        true
     }
     pub fn gaps(&self, now: u64, config: &Config, radar: &RadarFrame) -> GapFrame {
         if self

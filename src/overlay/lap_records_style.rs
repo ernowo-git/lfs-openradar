@@ -102,18 +102,6 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &LapRecordsFrame
             );
         }
     }
-    text(
-        16.0,
-        190.0,
-        Align2::LEFT_CENTER,
-        if frame.status.is_empty() {
-            "Waiting for LFS".into()
-        } else {
-            frame.status.clone()
-        },
-        15.0,
-        muted,
-    );
 }
 
 #[cfg(test)]

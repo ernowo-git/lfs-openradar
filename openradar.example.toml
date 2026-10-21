@@ -1,4 +1,4 @@
-# Disable this for local OutSim/OutGauge recording without InSim HUD features.
+# Disable this for local recording and the G-meter without InSim HUD features.
 insim_enabled = true
 # Local LFS client. Enable its listener by typing /insim 29999 in LFS.
 overlay_backend = "auto" # or "window" / "wayland" to override; see docs/native-wayland.md
@@ -20,6 +20,8 @@ outgauge_id = 24602
 rpm_blink_threshold_percent = 95
 # Time per blink color (50..500 ms); lower values blink faster.
 rpm_blink_interval_ms = 100
+# Horizontal G-meter radius: 1, 2, 3, or 4 G. Takes effect without reconnecting.
+g_force_range_g = 3
 # Decimal 511 = LFS OutSim Opts 1ff (hexadecimal), full LFST packet.
 outsim_options = 511
 outsim_id = 24601
@@ -49,6 +51,15 @@ overlay_toggle_key = "Insert"
 # Multiplayer still requires your own human car. Replays are unsupported.
 follow_viewed_car = false
 radar_enabled = true
+# Wait 2 seconds without warnings, then fade out over 300 ms.
+radar_auto_hide = false
+
+# Central horizontal G-meter; trail and measured peaks stay in memory only.
+[g_force]
+enabled = false
+window_x = 580.0
+window_y = 360.0
+scale = 1.0
 
 # Each gap has its own overlay window. Positions are logical screen pixels.
 [gap_ahead]

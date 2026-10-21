@@ -49,6 +49,7 @@ const NUMERIC: TextStyle = TextStyle {
 
 pub(super) const RADAR: RadarStyle = RadarStyle {
     player: WHITE,
+    opponent: Color32::from_rgb(0, 114, 178),
     panel: PanelStyle {
         size: Vec2::new(320.0, 320.0),
         ..PANEL
@@ -59,21 +60,15 @@ pub(super) const RADAR: RadarStyle = RadarStyle {
         origin: Vec2::new(0.5, 0.5),
         guide_center: Vec2::new(0.5, 0.5),
         guide_radius: 0.44,
-        top: 0.06,
-        bottom: 0.94,
         side_inset: 0.10,
         warnings: WarningStyle {
-            band_height: 0.36,
-            contact_band_height: 0.52,
-            fill_opacity: 0.9,
+            fill_opacity: 0.75,
             edge_fade: 0.18,
-            center_tolerance_m: 0.9,
             nearby: Color32::from_rgb(255, 210, 0),
             alongside: Color32::from_rgb(255, 20, 0),
             contact: Color32::from_rgb(255, 0, 0),
             uncertain: MUTED,
         },
-        marker_size: Vec2::new(14.0, 18.0),
     }),
     paused: TextStyle {
         font: TextFont::Body,

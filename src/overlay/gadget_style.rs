@@ -2,6 +2,8 @@
 
 use eframe::egui::{Align2, Color32, Stroke, Vec2};
 
+pub(super) const YELLOW: Color32 = Color32::from_rgb(255, 235, 63);
+
 pub(super) const DASHBOARD_BACKGROUND: Color32 =
     Color32::from_rgba_unmultiplied_const(37, 37, 37, 102);
 

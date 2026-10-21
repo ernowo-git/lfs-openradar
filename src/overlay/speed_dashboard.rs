@@ -4,9 +4,8 @@ use eframe::egui::{self, Align2, Color32, FontFamily, FontId, Pos2, Rect, Textur
 
 pub(super) const SIZE: Vec2 = Vec2::new(574.0, 210.0);
 const WHITE: Color32 = Color32::from_rgb(240, 240, 240);
-const YELLOW: Color32 = Color32::from_rgb(255, 235, 63);
 const RED: Color32 = Color32::from_rgb(236, 35, 69);
-use super::gadget_style::DASHBOARD_BACKGROUND as BACKGROUND;
+use super::gadget_style::{DASHBOARD_BACKGROUND as BACKGROUND, YELLOW};
 const RPM_MARKER: Color32 = Color32::from_rgb(37, 37, 37);
 
 #[derive(Clone)]

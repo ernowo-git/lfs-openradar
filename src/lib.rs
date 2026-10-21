@@ -8,6 +8,7 @@ pub mod dashboard;
 pub mod delta;
 pub mod demo;
 pub mod fuel;
+pub mod g_force;
 pub mod gaps;
 pub mod lap_log;
 pub mod lap_records;

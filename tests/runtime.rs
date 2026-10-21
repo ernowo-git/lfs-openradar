@@ -114,6 +114,7 @@ fn local_hud_commands_preserve_visibility_order_and_active_recording() {
         ("lap-records", Gadget::LapRecords),
         ("lap-log", Gadget::LapLog),
         ("relative", Gadget::Relative),
+        ("g-force", Gadget::GForce),
     ] {
         let command = format!(" HuD\t{} ", name.to_ascii_uppercase());
         let mut hidden = BTreeSet::new();
@@ -433,11 +434,9 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
                 break;
             }
             if send_outsim.load(Ordering::Relaxed) {
-                udp.send_to(
-                    &full_outsim(time, -1.0, 2.0, std::f32::consts::FRAC_PI_2),
-                    destination,
-                )
-                .unwrap();
+                let mut physics = full_outsim(time, -1.0, 2.0, std::f32::consts::FRAC_PI_2);
+                physics[40..44].copy_from_slice(&9.80665_f32.to_le_bytes());
+                udp.send_to(&physics, destination).unwrap();
                 if !shared {
                     udp.send_to(&[0; 96], destination).unwrap();
                 } // Unconfigured OutGauge traffic.
@@ -500,6 +499,9 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     }
     let live = overlay_reader.snapshot();
     assert!(live.frame.live, "{live:?}");
+    let [right, forward] = live.g_force.current.expect("fresh matching G-force");
+    assert!((right - 1.0).abs() < 0.0001);
+    assert!(forward.abs() < 0.0001);
     assert!(live.relative.rows[3].is_some());
     assert_eq!(live.relative.session, "RACE");
     assert_eq!(live.relative.total_laps, Some(10));
@@ -550,6 +552,9 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     outsim_enabled.store(false, Ordering::Relaxed);
     thread::sleep(Duration::from_millis(350));
     let paused = overlay_reader.snapshot();
+    assert!(paused.g_force.current.is_none());
+    assert!(paused.g_force.trail.is_empty());
+    assert!(paused.g_force.peak_g > 0.99);
     assert!(paused.connected);
     assert!(
         paused.relative.rows[3].is_some(),

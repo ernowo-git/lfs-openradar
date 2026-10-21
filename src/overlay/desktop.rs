@@ -21,14 +21,10 @@ const PANEL_MARGIN: f32 = 20.0;
 const CARD_WIDTH: f32 = 300.0;
 const CARD_HEIGHT: f32 = 464.0;
 const CARD_SPACING: f32 = 12.0;
+const PANEL_MIN_WIDTH: f32 = 1920.0;
 
 fn initial_panel_size() -> Vec2 {
-    Vec2::new(
-        GADGETS.len() as f32 * CARD_WIDTH
-            + (GADGETS.len() - 1) as f32 * CARD_SPACING
-            + PANEL_MARGIN * 2.0,
-        CARD_HEIGHT + 180.0,
-    )
+    Vec2::new(PANEL_MIN_WIDTH, CARD_HEIGHT + 180.0)
 }
 
 pub fn run(
@@ -82,7 +78,7 @@ pub fn run(
         viewport: ViewportBuilder::default()
             .with_title("LFS OpenRadar · Control panel")
             .with_inner_size(initial_panel_size())
-            .with_min_inner_size([380.0, 400.0])
+            .with_min_inner_size([PANEL_MIN_WIDTH, 400.0])
             // eframe derives the shared painter's alpha support from the root
             // viewport, even when only a child needs a transparent background.
             // The control panel still paints its own opaque central frame.
@@ -157,7 +153,7 @@ struct App {
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
-    gap_overlays: [GapOverlay; 8],
+    gap_overlays: [GapOverlay; 9],
     tab: ControlTab,
     opening_layout_passes: u8,
     recording_directory: String,
@@ -169,6 +165,7 @@ enum ControlTab {
     Recording,
     Gadgets,
     Settings,
+    Help,
 }
 
 #[derive(Clone)]
@@ -238,6 +235,7 @@ impl App {
             GapOverlay::new(&config.lap_records, &overlay_data),
             GapOverlay::new(&config.lap_log, &overlay_data),
             GapOverlay::new(&config.relative, &overlay_data),
+            GapOverlay::new(&config.g_force, &overlay_data),
         ];
         let mut app = Self {
             initial_backend: config.overlay_backend,
@@ -576,6 +574,7 @@ impl App {
             &mut self.config.lap_records,
             &mut self.config.lap_log,
             &mut self.config.relative,
+            &mut self.config.g_force,
         ]) {
             if let Ok(mut feedback) = gap.feedback.lock() {
                 if let Some(position) = feedback.moved_to.take() {
@@ -642,12 +641,19 @@ impl App {
                     "lap-log-overlay",
                     "LFS OpenRadar · Lap-time log",
                 )
-            } else {
+            } else if index == 7 {
                 (
                     Gadget::Relative,
                     &self.config.relative,
                     "relative-overlay",
                     "LFS OpenRadar · Relative",
+                )
+            } else {
+                (
+                    Gadget::GForce,
+                    &self.config.g_force,
+                    "g-force-overlay",
+                    "LFS OpenRadar · G-force",
                 )
             };
             let visible = overlay_visible(
@@ -693,6 +699,7 @@ impl App {
                         Gadget::LapRecords => super::lap_records_style::SIZE,
                         Gadget::LapLog => super::lap_log_style::SIZE,
                         Gadget::Relative => super::relative_style::SIZE,
+                        Gadget::GForce => super::g_force_style::SIZE,
                         Gadget::Delta => theme.delta.panel.size,
                         Gadget::Ahead => theme.ahead.panel.size,
                         Gadget::Behind => theme.behind.panel.size,
@@ -753,6 +760,8 @@ impl App {
         }
     }
     fn control_panel(&mut self, ctx: &egui::Context, snapshot: &Snapshot) {
+        let monitor = ctx.input(|input| input.viewport().monitor_size);
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(panel_min_size(monitor)));
         let header = egui::TopBottomPanel::top("control-header")
             .frame(
                 egui::Frame::new()
@@ -835,6 +844,7 @@ impl App {
                     ui.selectable_value(&mut self.tab, ControlTab::Gadgets, "Gadgets");
                     ui.selectable_value(&mut self.tab, ControlTab::Settings, "Settings");
                     ui.selectable_value(&mut self.tab, ControlTab::Recording, "Recording");
+                    ui.selectable_value(&mut self.tab, ControlTab::Help, "Help");
                 });
             });
         let content = egui::CentralPanel::default()
@@ -850,6 +860,7 @@ impl App {
                         ControlTab::Recording => self.recording_controls(ui),
                         ControlTab::Gadgets => self.gadget_cards(ui, snapshot),
                         ControlTab::Settings => self.settings_controls(ui, snapshot),
+                        ControlTab::Help => self.help_controls(ui),
                     })
                     .content_size
             });
@@ -878,8 +889,95 @@ impl App {
         }
     }
 
+    fn help_controls(&self, ui: &mut egui::Ui) {
+        ui.heading("LFS commands");
+        ui.label("Type these in LFS chat with InSim connected. Commands stay local.");
+        for (command, description) in [
+            ("/o hud", "Toggle the HUD."),
+            ("/o show", "Show enabled gadgets."),
+            ("/o hide", "Hide the HUD."),
+            ("/o hud <gadget>", "Toggle one enabled gadget."),
+        ] {
+            ui.horizontal_wrapped(|ui| {
+                ui.monospace(command);
+                ui.label(description);
+            });
+        }
+        ui.add_space(8.0);
+        ui.strong("Gadget commands");
+        for (command, gadget) in [
+            ("/o hud radar", Gadget::Radar),
+            ("/o hud ahead", Gadget::Ahead),
+            ("/o hud behind", Gadget::Behind),
+            ("/o hud delta", Gadget::Delta),
+            ("/o hud speed", Gadget::Dashboard),
+            ("/o hud fuel", Gadget::Fuel),
+            ("/o hud lap-records", Gadget::LapRecords),
+            ("/o hud lap-log", Gadget::LapLog),
+            ("/o hud relative", Gadget::Relative),
+            ("/o hud g-force", Gadget::GForce),
+        ] {
+            ui.horizontal_wrapped(|ui| {
+                ui.monospace(command);
+                ui.label(gadget.title());
+            });
+        }
+        ui.label("Commands ignore letter case. Gadget toggles reset on restart and keep your saved settings.");
+
+        ui.add_space(12.0);
+        ui.heading("Getting started and shortcuts");
+        ui.label("With LFS closed, run LFS startup setup in Settings. Start LFS, then click Apply / reconnect.");
+        ui.label("Turn on Show overlays and enable your gadgets. Use Position mode to arrange them, then turn it off. Click Save settings to keep the layout.");
+        if let Ok(Some(key)) = self.config.overlay_toggle_key() {
+            ui.label(format!(
+                "{} toggles the HUD. Check Settings for shortcut availability.",
+                key.name
+            ));
+        }
+        ui.label("Keep this panel open while driving. Closing it exits OpenRadar.");
+        ui.label(format!(
+            "Configuration file: {}",
+            self.config_path.display()
+        ));
+
+        ui.add_space(12.0);
+        ui.heading("Local recording");
+        if recording_available(env!("CARGO_PKG_VERSION_PRE")) {
+            ui.label("Open Recording, enter the track code and output directory, then click Start recording. Click Stop recording when finished. Requires live telemetry; InSim is optional.");
+        } else {
+            ui.label("Work in progress. Recording is available in alpha builds.");
+        }
+
+        ui.add_space(12.0);
+        ui.heading("Troubleshooting");
+        ui.label("No HUD? Check Show overlays and each gadget's Enabled setting.");
+        ui.label("No data? Check LFS telemetry setup, then click Apply / reconnect.");
+        ui.label("No commands? Enable InSim. Commands are unavailable in demo mode.");
+        ui.label("Changed overlay backend? Save settings and restart OpenRadar.");
+
+        ui.add_space(12.0);
+        ui.heading("More documentation");
+        for (label, path) in [
+            ("Usage guide", "usage.md"),
+            ("Installation and LFS setup", "installation.md"),
+            ("Configuration reference", "configuration.md"),
+            ("Local recording guide", "local-recording.md"),
+            ("Native Wayland guide", "native-wayland.md"),
+        ] {
+            ui.hyperlink_to(
+                label,
+                format!("https://github.com/ernowo-git/lfs-openradar/blob/main/docs/{path}"),
+            );
+        }
+    }
+
     fn recording_controls(&mut self, ui: &mut egui::Ui) {
         ui.heading("Local recording");
+        if !recording_available(env!("CARGO_PKG_VERSION_PRE")) {
+            ui.label("Work in progress");
+            ui.label("Recording is available in alpha builds.");
+            return;
+        }
         ui.label("Save OutSim/OutGauge telemetry locally for later lap analysis.");
         ui.label("Track is user-declared. Official timing, legality and driver identity are not verified.");
         let open = self.runtime.as_ref().is_some_and(|r| r.recording_open());
@@ -1329,6 +1427,23 @@ impl App {
                                             ui.add(egui::Slider::new(&mut self.config.fuel.scale, 0.5..=2.0).text("Scale"));
                                             ui.label(egui::RichText::new("REFUEL is additional tank %. * means more than one stop. Usage uses up to 5 full laps; timed-race finish estimates are unavailable.").small());
                                         }
+                                        Gadget::GForce => {
+                                            ui.checkbox(&mut self.config.g_force.enabled, "Enabled");
+                                            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 185.0), egui::Sense::hover());
+                                            super::g_force_style::paint(ui.painter(), rect, &snapshot.g_force, self.config.g_force_range_g);
+                                            ui.label(egui::RichText::new(&snapshot.g_force.status).small());
+                                            ui.horizontal(|ui| {
+                                                ui.label("Range");
+                                                for range in [1, 2, 3, 4] {
+                                                    ui.selectable_value(&mut self.config.g_force_range_g, range, format!("{range} G"));
+                                                }
+                                            });
+                                            let gap = &mut self.gap_overlays[8];
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            gap_position_controls(ui, &mut self.config.g_force, &mut gap.window, gap.editing);
+                                            ui.add(egui::Slider::new(&mut self.config.g_force.scale, 0.5..=2.0).text("Scale"));
+                                            ui.label(egui::RichText::new("Horizontal G. Up: braking; down: acceleration; sideways: opposite the turn. White: observed peaks, not a grip limit. Apply / reconnect resets peaks.").small());
+                                        }
                                         Gadget::Relative => {
                                             ui.checkbox(&mut self.config.relative.enabled, "Enabled");
                                             let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 185.0), egui::Sense::hover());
@@ -1353,7 +1468,6 @@ impl App {
                                             ui.checkbox(&mut self.config.lap_records.enabled, "Enabled");
                                             let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 130.0), egui::Sense::hover());
                                             super::lap_records_style::paint(ui.painter(), rect, &snapshot.lap_records);
-                                            ui.label(egui::RichText::new(&snapshot.lap_records.status).small());
                                             let gap = &mut self.gap_overlays[5];
                                             ui.checkbox(&mut gap.editing, "Position mode");
                                             gap_position_controls(ui, &mut self.config.lap_records, &mut gap.window, gap.editing);
@@ -1362,6 +1476,8 @@ impl App {
                                         }
                                         Gadget::Radar => {
                                             ui.checkbox(&mut self.config.radar_enabled, "Enabled");
+                                            ui.checkbox(&mut self.config.radar_auto_hide, "Auto hide")
+                                                .on_hover_text("Wait 2 seconds without warnings, then fade out. Traffic shows the radar immediately.");
                                             let (rect, _) = ui.allocate_exact_size(
                                                 Vec2::new(ui.available_width(), 220.0),
                                                 egui::Sense::hover(),
@@ -1470,6 +1586,7 @@ const GADGETS: &[Gadget] = &[
     Gadget::LapRecords,
     Gadget::LapLog,
     Gadget::Relative,
+    Gadget::GForce,
 ];
 impl Gadget {
     fn title(self) -> &'static str {
@@ -1483,6 +1600,7 @@ impl Gadget {
             Self::LapRecords => "Lap records",
             Self::LapLog => "Lap-time log",
             Self::Relative => "Relative",
+            Self::GForce => "G-force",
         }
     }
 }
@@ -1584,9 +1702,29 @@ fn project_link(ui: &mut egui::Ui, link: ProjectLink) -> egui::Response {
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(link.label())
 }
+fn recording_available(prerelease: &str) -> bool {
+    prerelease.split('.').next() == Some("alpha")
+}
+
+fn panel_min_size(monitor: Option<Vec2>) -> Vec2 {
+    monitor.map_or(Vec2::new(PANEL_MIN_WIDTH, 400.0), |monitor| {
+        let available = (monitor - Vec2::new(64.0, 100.0)).max(Vec2::splat(1.0));
+        Vec2::new(
+            if monitor.x > PANEL_MIN_WIDTH {
+                PANEL_MIN_WIDTH
+            } else {
+                available.x.min(380.0)
+            },
+            available.y.min(400.0),
+        )
+    })
+}
+
 fn fit_panel_to_monitor(desired: Vec2, monitor: Option<Vec2>) -> Vec2 {
-    monitor.map_or(desired, |monitor| {
-        desired.min((monitor - Vec2::new(64.0, 100.0)).max(Vec2::splat(1.0)))
+    let minimum = panel_min_size(monitor);
+    monitor.map_or(desired.max(minimum), |monitor| {
+        let available = (monitor - Vec2::new(64.0, 100.0)).max(minimum);
+        desired.max(minimum).min(available)
     })
 }
 fn overlay_visible(
@@ -1666,6 +1804,7 @@ impl eframe::App for App {
         }
         #[cfg(all(target_os = "linux", feature = "native-wayland"))]
         if let Some(native) = &self.native {
+            native.set_radar_editing(self.edit_overlay);
             native.update(
                 self.config.clone(),
                 self.overlay_enabled,
@@ -1730,6 +1869,20 @@ fn render_gap_overlay(
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
     let theme = theme::resolve(data.config.hud_style);
+    if kind == Gadget::GForce {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                super::g_force_style::paint(
+                    ui.painter(),
+                    ui.max_rect(),
+                    &snapshot.g_force,
+                    data.config.g_force_range_g,
+                )
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
     if kind == Gadget::Relative {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -2476,6 +2629,7 @@ mod tests {
             (Gadget::LapRecords, "lap-records-overlay"),
             (Gadget::LapLog, "lap-log-overlay"),
             (Gadget::Relative, "relative-overlay"),
+            (Gadget::GForce, "g-force-overlay"),
         ];
         let input = || egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
@@ -2743,6 +2897,173 @@ mod tests {
     }
 
     #[test]
+    fn recording_controls_are_reserved_for_alpha_versions() {
+        for prerelease in ["alpha", "alpha.1", "alpha.10"] {
+            assert!(recording_available(prerelease));
+        }
+        for prerelease in ["", "beta.1", "rc.1", "alphabet"] {
+            assert!(!recording_available(prerelease));
+        }
+        let ctx = egui::Context::default();
+        let mut app = App::new(
+            Config::default(),
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| app.recording_controls(ui));
+        });
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        if recording_available(env!("CARGO_PKG_VERSION_PRE")) {
+            assert!(labels.contains(&"Start recording"));
+            assert!(!labels.contains(&"Work in progress"));
+        } else {
+            assert!(labels.contains(&"Work in progress"));
+            assert!(!labels.contains(&"Start recording"));
+            assert!(!labels.contains(&"Output directory"));
+        }
+    }
+
+    #[test]
+    fn panel_minimum_width_respects_the_current_monitor() {
+        assert_eq!(initial_panel_size().x, 1920.0);
+        for monitor in [
+            None,
+            Some(Vec2::new(2560.0, 1440.0)),
+            Some(Vec2::new(1921.0, 1080.0)),
+        ] {
+            assert_eq!(panel_min_size(monitor).x, 1920.0);
+            assert_eq!(
+                fit_panel_to_monitor(Vec2::new(600.0, 600.0), monitor).x,
+                1920.0
+            );
+            let ctx = egui::Context::default();
+            super::super::fonts::install(&ctx);
+            let mut app = App::new(Config::default(), "unused.toml".into(), true, None, None);
+            let snapshot = Demo::default().snapshot(7_000, &app.config);
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 600.0))),
+                ..Default::default()
+            };
+            input
+                .viewports
+                .get_mut(&ViewportId::ROOT)
+                .unwrap()
+                .monitor_size = monitor;
+            let output = ctx.run(input, |ctx| app.control_panel(ctx, &snapshot));
+            let commands = &output.viewport_output[&ViewportId::ROOT].commands;
+            assert!(commands.iter().any(|command| matches!(
+                command, egui::ViewportCommand::MinInnerSize(size) if size.x == 1920.0
+            )));
+            assert!(commands.iter().any(|command| matches!(
+                command, egui::ViewportCommand::InnerSize(size) if size.x == 1920.0
+            )));
+        }
+        let small = Some(Vec2::new(1024.0, 768.0));
+        assert_eq!(panel_min_size(small).x, 380.0);
+        assert_eq!(fit_panel_to_monitor(initial_panel_size(), small).x, 960.0);
+        let full_hd = Some(Vec2::new(1920.0, 1080.0));
+        assert_eq!(panel_min_size(full_hd).x, 380.0);
+        assert_eq!(
+            fit_panel_to_monitor(initial_panel_size(), full_hd).x,
+            1856.0
+        );
+    }
+
+    #[test]
+    fn help_tab_opens_command_reference_and_wraps_in_a_narrow_panel() {
+        let ctx = egui::Context::default();
+        super::super::fonts::install(&ctx);
+        let mut app = App::new(
+            Config::default(),
+            PathBuf::from("unused.toml"),
+            true,
+            None,
+            None,
+        );
+        app.opening_layout_passes = 4;
+        let snapshot = Demo::default().snapshot(7_000, &app.config);
+        let input = || egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(380.0, 3200.0))),
+            ..Default::default()
+        };
+        let mut output = ctx.run(input(), |ctx| app.control_panel(ctx, &snapshot));
+        let help = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == "Help" => {
+                    Some(text.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        for pressed in [true, false] {
+            let mut input = input();
+            input.events = vec![
+                egui::Event::PointerMoved(help),
+                egui::Event::PointerButton {
+                    pos: help,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            output = ctx.run(input, |ctx| app.control_panel(ctx, &snapshot));
+        }
+        assert!(app.tab == ControlTab::Help);
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                Shape::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        for label in [
+            "/o hud",
+            "/o show",
+            "/o hide",
+            "/o hud <gadget>",
+            "/o hud radar",
+            "/o hud ahead",
+            "/o hud behind",
+            "/o hud delta",
+            "/o hud speed",
+            "/o hud fuel",
+            "/o hud lap-records",
+            "/o hud lap-log",
+            "/o hud relative",
+            "Getting started and shortcuts",
+            "Local recording",
+            "Troubleshooting",
+            "Configuration file: unused.toml",
+            "Native Wayland guide",
+        ] {
+            assert!(
+                texts.iter().any(|text| text.galley.job.text == label),
+                "missing {label}"
+            );
+        }
+        for text in texts {
+            assert!(
+                text.visual_bounding_rect().right() <= 380.0,
+                "text overflows: {}",
+                text.galley.job.text
+            );
+        }
+    }
+
+    #[test]
     fn opening_panel_fits_cards_and_tabs_keep_actions_in_the_header() {
         let ctx = egui::Context::default();
         super::super::fonts::install(&ctx);
@@ -2797,6 +3118,7 @@ mod tests {
             .unwrap();
         for label in [
             "Radar position mode",
+            "Auto hide",
             "Position",
             "Radar size",
             "Side range (m)",

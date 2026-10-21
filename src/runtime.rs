@@ -33,6 +33,7 @@ pub struct Snapshot {
     pub lap_records: crate::lap_records::LapRecordsFrame,
     pub lap_log: crate::lap_log::LapLogFrame,
     pub relative: crate::relative::RelativeFrame,
+    pub g_force: crate::g_force::GForceFrame,
     pub lap_records_error: Option<String>,
     pub outgauge_error: Option<String>,
     pub outgauge_forward_error: Option<String>,
@@ -327,6 +328,9 @@ fn run(
     let mut retry_records_at = 0;
     let mut stats = Snapshot::default();
     let mut dashboard = crate::dashboard::DashboardTelemetry::default();
+    let mut g_force = crate::g_force::GForceTelemetry::default();
+    let mut g_force_target = None;
+    let mut g_force_track: Option<String> = None;
     let mut gauge = None;
     let mut gauge_retry_at = 0;
     let mut connection_attempt: Option<std::sync::mpsc::Receiver<Result<TcpStream, String>>> = None;
@@ -377,6 +381,9 @@ fn run(
         {
             engine.clear();
             dashboard.clear();
+            if config.insim_enabled {
+                g_force.clear();
+            }
             framer = Framer::default();
             protocol_ready = false;
             local_lights_supported = false;
@@ -498,6 +505,33 @@ fn run(
                                     }
                                     Ok(packet) if protocol_ready => {
                                         let player_id = engine.dashboard_player().map(|p| p.plid);
+                                        let g_force_id = g_force_target
+                                            .as_ref()
+                                            .map(|(id, _)| *id)
+                                            .or(player_id);
+                                        let reset_g_force = match &packet {
+                                            Packet::Session
+                                            | Packet::LayoutChanged
+                                            | Packet::RaceStart {
+                                                requested: false, ..
+                                            } => true,
+                                            Packet::State(state) => {
+                                                let changed = g_force_track
+                                                    .as_ref()
+                                                    .is_some_and(|old| old != &state.track);
+                                                g_force_track = Some(state.track.clone());
+                                                changed
+                                            }
+                                            Packet::Pit(id)
+                                            | Packet::Leave(id)
+                                            | Packet::Reset(id)
+                                            | Packet::Takeover(id) => Some(*id) == g_force_id,
+                                            Packet::Player(p) => Some(p.plid) == g_force_id,
+                                            _ => false,
+                                        };
+                                        if reset_g_force {
+                                            g_force.clear();
+                                        }
                                         let invalidate = match &packet {
                                             Packet::State(_)
                                             | Packet::Camera(_)
@@ -532,6 +566,18 @@ fn run(
                                         if let Err(error) = engine.packet(packet, packet_time) {
                                             stats.malformed_packets += 1;
                                             stats.error = Some(error);
+                                        }
+                                        if let Some(player) = engine.dashboard_player() {
+                                            let target = (player.plid, player.model.clone());
+                                            if g_force_target
+                                                .as_ref()
+                                                .is_some_and(|old| old != &target)
+                                            {
+                                                g_force.clear();
+                                            }
+                                            g_force_target = Some(target);
+                                        } else {
+                                            g_force.suspend();
                                         }
                                         if refresh && let Err(error) = request_roster(stream) {
                                             disconnected = Some(error.to_string());
@@ -596,6 +642,7 @@ fn run(
             pending_light_request = None;
             engine.clear();
             dashboard.clear();
+            g_force.clear();
             stats.error = Some(error);
             retry_at = now + 2000;
         }
@@ -632,18 +679,25 @@ fn run(
                         }
                         continue;
                     }
-                    match outsim::decode(bytes, config.outsim_options, config.expected_outsim_id())
-                    {
-                        Ok(sample) => {
+                    match outsim::decode_telemetry(
+                        bytes,
+                        config.outsim_options,
+                        config.expected_outsim_id(),
+                    ) {
+                        Ok(telemetry) => {
                             if let Some(sink) = recording.lock().unwrap().as_ref() {
                                 sink.packet(
                                     crate::recording::Stream::Outsim,
-                                    sample.time_ms,
+                                    telemetry.sample.time_ms,
                                     bytes,
                                 );
                             }
-                            if protocol_ready {
-                                engine.outsim(sample, start.elapsed().as_millis() as u64, &config);
+                            let received = start.elapsed().as_millis() as u64;
+                            if !config.insim_enabled
+                                || (protocol_ready
+                                    && engine.outsim(telemetry.sample.clone(), received, &config))
+                            {
+                                g_force.receive(&telemetry, received, config.stale_ms);
                             }
                         }
                         Err(error) => {
@@ -692,6 +746,7 @@ fn run(
         }
         let render_now = start.elapsed().as_millis() as u64;
         stats.dashboard = dashboard.frame(render_now, &config, engine.dashboard_player());
+        stats.g_force = g_force.frame(render_now, config.stale_ms);
         stats.fuel = engine.fuel(render_now, &config);
         if let Some(store) = &store {
             // ponytail: occasional config writes run here; move I/O off-thread if slow storage stalls telemetry.

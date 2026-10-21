@@ -10,6 +10,8 @@ mod fonts;
 #[cfg(feature = "desktop")]
 mod fuel_style;
 #[cfg(feature = "desktop")]
+mod g_force_style;
+#[cfg(feature = "desktop")]
 mod gadget_style;
 #[cfg(feature = "desktop")]
 mod gap_style;
@@ -54,6 +56,7 @@ pub enum Gadget {
     LapRecords,
     LapLog,
     Relative,
+    GForce,
 }
 
 impl Gadget {
@@ -68,6 +71,7 @@ impl Gadget {
             "lap-records" => Some(Self::LapRecords),
             "lap-log" => Some(Self::LapLog),
             "relative" => Some(Self::Relative),
+            "g-force" => Some(Self::GForce),
             _ => None,
         }
     }

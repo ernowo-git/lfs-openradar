@@ -1,6 +1,20 @@
 use lfs_openradar::config::{Config, HudStyle};
 
 #[test]
+fn radar_auto_hide_defaults_off_and_round_trips() {
+    assert!(!Config::default().radar_auto_hide);
+    let legacy: Config = toml::from_str("radar_enabled = true").unwrap();
+    assert!(!legacy.radar_auto_hide);
+    let example: Config = toml::from_str(include_str!("../openradar.example.toml")).unwrap();
+    assert!(!example.radar_auto_hide);
+    let config: Config = toml::from_str("radar_auto_hide = true").unwrap();
+    config.validate().unwrap();
+    let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+    assert!(restored.radar_auto_hide);
+    assert!(toml::from_str::<Config>("radar_auto_hide = 2").is_err());
+}
+
+#[test]
 fn legacy_styles_migrate_to_gt_without_changing_placement() {
     assert_eq!(HudStyle::default(), HudStyle::Gt7Inspired);
     assert_eq!(Config::default().hud_style, HudStyle::Gt7Inspired);

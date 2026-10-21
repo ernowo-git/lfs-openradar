@@ -92,6 +92,17 @@ GT colors and layout are defined in `src/overlay/gt7_style.rs`; Relative uses
 `src/overlay/relative_style.rs`. The same painters and base dimensions serve
 both overlay backends.
 
+## Radar auto-hide
+
+Set the top-level `radar_auto_hide = true`, or enable **Auto hide** on the Radar
+card. It defaults to `false`. After 2 seconds without warning indicators, the
+radar fades out over 300 ms with an ease-out animation. Any nearby, alongside,
+contact, or uncertain-traffic indicator restores it immediately.
+
+The preview and Radar position mode stay visible. Auto-hide affects only the
+radar and preserves Enabled, Show overlays, and temporary LFS command hides.
+Click **Save settings** to keep the preference.
+
 ## Relative
 
 Relative defaults to disabled. It uses the existing InSim connection and does
@@ -114,6 +125,35 @@ scale = 1.0
 Window and native Wayland positions/scales remain separate. Scales accept
 0.5–2.0. The panel is 520 × 360 logical pixels before scaling. See
 [Relative usage](usage.md#relative) for gaps, session timing, and reliability.
+
+## G-force meter
+
+The G-force meter defaults to disabled. Enable **G-force** in Gadgets. It uses
+OutSim and needs no OutGauge or external cache. With `insim_enabled = false`,
+the meter works independently; with InSim enabled, samples must match the
+selected driver under the existing cockpit/custom-view rules.
+
+Set the top-level range before any TOML section headings:
+
+```toml
+g_force_range_g = 3 # default; 1, 2, 3, or 4 G, from center to outer ring
+
+[g_force]
+enabled = true
+window_x = 580.0
+window_y = 360.0
+scale = 1.0
+
+[wayland.g_force]
+x = 580.0
+y = 360.0
+scale = 1.0
+```
+
+The base panel is 320 × 360 logical pixels. Window and Wayland placements are
+independent; scales accept 0.5–2.0. Range changes take effect immediately.
+**Save settings** saves preferences, not the trail or measured peaks.
+See [G-force usage](usage.md#g-force-meter) for axes and reset behavior.
 
 ## InSim password
 
