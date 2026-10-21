@@ -44,6 +44,42 @@ overlays when LFS is in the background. Windowed or borderless LFS is the initia
 target. See [platform status](#platform-status) for platform limitations and
 [graphics diagnostics](#graphics-diagnostics) for troubleshooting details.
 
+Open the control panel's **Help** tab for the `/o` command reference, gadget
+names, shortcuts, setup instructions, recording availability, troubleshooting,
+and links to the full documentation.
+
+## G-force meter
+
+Enable **G-force** in Gadgets. The outer ring defaults to **3 G**; choose a
+**1 G**, **2 G**, **3 G**, or **4 G** radius.
+Use Position mode, X/Y, and Scale to arrange it on either overlay backend.
+The yellow dot points in the direction of the horizontal load felt by the driver:
+braking moves it up, acceleration moves it down, a left turn moves it right,
+and a right turn moves it left. This reverses the car's acceleration vector
+for display; the dot, trail, and measured peak outline use the same convention.
+Vertical acceleration and static vertical gravity are excluded. This is a
+horizontal motion meter, not a three-axis occupant-load measurement.
+
+The dot has about 80 ms of smoothing and a 1.5-second fading trail. The white
+outline stores measured peaks by direction; gaps mean that direction has not
+been observed. It does not predict available tyre grip. The bottom readings
+show current combined horizontal G and the highest smoothed value observed.
+Values outside the selected range stay numerically correct; plotted points
+stop at the outer ring.
+
+OutSim is required; OutGauge is not. With InSim enabled, the usual local-driver
+and **Follow viewed car** rules apply. With `insim_enabled = false`, OutSim can
+drive the meter independently, without an InSim connection. The dot and trail
+disappear when telemetry becomes stale or unavailable. Repeated simulation
+timestamps do not keep a paused reading live.
+
+Peaks survive pauses and temporary camera changes. Reconnecting, restarting,
+changing track/driver/car, a new session, pitting into the garage, or resetting
+the selected car clears them. Without InSim, track/car changes cannot be
+identified; reconnect to clear peaks manually. Trail and peaks stay in bounded
+process memory and disappear on exit. No Valkey service or disk cache is used.
+Use `/o hud g-force` to toggle temporary visibility when InSim is connected.
+
 ## Lap records
 
 Enable **Lap records** in Gadgets. The header identifies the current track and
@@ -99,8 +135,9 @@ ranking. Relative supports live race, qualifying, and practice sessions on
 standard circuit paths. It uses InSim and works without OutSim/OutGauge samples.
 The existing selected-driver and Follow viewed car rules apply.
 
-Gaps are unsigned estimates to one decimal place, calculated from passage times
-at a common track-path point. **EST. GAP** identifies their estimated nature.
+Gaps are estimates to one decimal place, calculated from passage times at a
+common track-path point. Cars ahead show `+` (for example, `+0.8`); cars behind
+show `-` (for example, `-0.8`). **EST. GAP** identifies their estimated nature.
 Your row reads `0.0`; unavailable, stale, interrupted, or insufficient passage
 history shows `—`. Cars in the pit lane are dimmed and marked **PIT**, with their
 gaps unavailable. Garage cars are excluded. On-track ordering also needs a
@@ -133,11 +170,10 @@ selector has been removed. Speed dashboard and Fuel retain their reference desig
 
 GT uses transparent backgrounds, boxed driver positions, fading gap
 rows, digital reference-time and signed delta cells, and a larger estimated-lap
-readout. It also adds a red directional player marker, blue opponent markers,
-and pale radar guides. Left/right sectors of the outer circle indicate nearby
-or alongside cars in amber and potential contact in red; gray indicates uncertain
-telemetry. The strongest warning appears on each occupied side, and opponent
-borders stay blue. Faster lap deltas use a blue cell and slower deltas use a red
+readout. The radar uses a white player marker, blue opponent markers, and white
+diagonal guides. Yellow sectors indicate nearby cars; red indicates alongside
+cars or potential contact, and muted sectors indicate uncertain telemetry.
+Faster lap deltas use a blue cell and slower deltas use a red
 cell, both with white text. The best and estimated lap values use Azeret Mono.
 
 The theme is inspired by GT7's HUD; telemetry and calculations still come from LFS.
@@ -155,19 +191,30 @@ GT colors, cell sizes, borders, offsets, and type sizes are centralized in
 Roboto and Azeret Mono are embedded for this theme, with
 [font licenses](font-licenses.md) included in release archives.
 
-The proximity radar has a transparent background, a white centre marker and
-fading white crosshairs, with no title or filled disk. Nearby traffic is shown
-only by the warning bands, with no opponent arrows or dots. The white player
-marker size is set by `RADAR.proximity.marker_size` and scales with the radar
-window; it is not a physical car footprint.
+The proximity radar has a transparent background and fading white X guides,
+with no title or filled disk. Your car is a white rounded rectangle at the centre;
+other cars use the same shape and size in blue (`#0072B2`) at their relative
+positions. Both have black outlines. The fills have at least 3:1 contrast against
+each other, and blue has at least 3:1 contrast against its outline. Both markers
+keep the width-to-length ratio of `car_width_m` and `car_length_m` (default
+1.8 × 4.2 metres). These shared configured dimensions also drive collision
+warnings; per-model LFS hitboxes are not detected. Both marker dimensions use
+the radar's lateral metres-to-pixels scale: increasing **Side range (m)** makes
+the cars smaller, and decreasing it makes them larger. Positions use that same
+scale on both axes. Resizing the radar scales the markers and their positions
+together. Side range controls the zoom; cars outside the visible panel are clipped.
 
-Warning bands follow each opponent's position ahead or behind on the correct
-side, fading at the circular sensor edge. Traffic directly ahead or behind
-lights a full-width cap. Yellow means nearby, red means alongside or potential
-contact; potential contact uses a thicker band. Delayed/uncertain telemetry
-uses muted warnings, and paused radar hides all warnings. Sensor geometry,
+The diagonal guides divide warnings into front, rear, left, and right wedges,
+fading at the circular sensor edge. The strongest warning is drawn last.
+Delayed/uncertain telemetry uses muted warnings, and paused radar hides all
+warnings and car markers. Sensor geometry,
 opacity and colors live in `RADAR.proximity.warnings` in `gt7_style.rs`.
 These indicators use the existing telemetry and threat thresholds.
+
+Enable **Auto hide** on the Radar card to hide it when there are no indicators:
+it waits 2 seconds, then fades out over 300 ms. Any traffic indicator shows it
+immediately. The preview and Position mode remain visible. The setting defaults
+to off; **Save settings** keeps your choice.
 
 Gap position/name rows and reference/live-delta cells use `CELL_BACKGROUND`
 in `gt7_style.rs`: neutral grey-black at 30% opacity. Gap interval rows fade
@@ -283,10 +330,11 @@ Use `/o hud <gadget>` to toggle one gadget temporarily:
 ```text
 /o hud radar
 /o hud relative
+/o hud g-force
 ```
 
 Gadget names are `radar`, `ahead`, `behind`, `delta`, `speed`, `fuel`,
-`lap-records`, `lap-log`, and `relative`. Names are case-insensitive. Individual
+`lap-records`, `lap-log`, `relative`, and `g-force`. Names are case-insensitive. Individual
 commands preserve the gadget's **Enabled** setting, position, scale, telemetry,
 and recording. Disabled gadgets must still be enabled in the control panel.
 The master **Show overlays** setting and background-hiding rules still apply.
@@ -550,8 +598,8 @@ The table uses up to the five most recent usable full laps:
 
 REFUEL is the amount to **add**. An asterisk means the additional amount exceeds
 the current tank space, so it requires multiple stops. The pump badge uses the
-AVG laps until empty: green above 2 laps, yellow above 1 through 2 laps, and red
-at 1 lap or less (refuel this lap). It stays grey while the range is unavailable;
+AVG laps until empty: green at 4 laps or more, yellow from 2 to under 4 laps,
+and red below 2 laps. It stays grey while the range is unavailable;
 an empty tank is red immediately. The signed race shortfall is shown separately.
 
 Live percentage appears before calibration. Usage and range stay **—** until

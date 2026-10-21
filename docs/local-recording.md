@@ -6,6 +6,9 @@ OpenRadar can save OutSim and OutGauge without InSim, a multiplayer server conne
 
 ## Record from the panel
 
+The Recording tab is available in `-alpha` builds (including `-alpha.1`). Stable
+releases show **Work in progress**. Headless recording remains available.
+
 1. With LFS closed, configure OutSim and OutGauge using the existing Settings setup buttons. Extended OutSim (`OutSim Opts 1ff`) supplies the detailed channels. Do not change the game's configuration while LFS is running.
 2. Open **Recording**. Turn off **Enable InSim HUD connection** for recording without InSim.
 3. Enter the actual track code, such as `BL1`, and the output directory. Track selection is your declaration, not automatic detection. Relative directories are relative to the application's working directory.

@@ -127,6 +127,9 @@ impl NativeOverlay {
     pub fn status(&self) -> OverlayStatus {
         self.session.lock().unwrap().status()
     }
+    pub fn set_radar_editing(&self, editing: bool) {
+        self.session.lock().unwrap().radar_editing = editing;
+    }
     pub fn config_for_save(&self) -> Config {
         self.session.lock().unwrap().config_for_save()
     }

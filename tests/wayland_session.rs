@@ -17,6 +17,7 @@ fn temporary_gadget_hiding_preserves_native_layout_enablement_and_save() {
     config.lap_records.enabled = true;
     config.lap_log.enabled = true;
     config.relative.enabled = true;
+    config.g_force.enabled = true;
     let gadgets = [
         Gadget::Radar,
         Gadget::Ahead,
@@ -27,6 +28,7 @@ fn temporary_gadget_hiding_preserves_native_layout_enablement_and_save() {
         Gadget::LapRecords,
         Gadget::LapLog,
         Gadget::Relative,
+        Gadget::GForce,
     ];
     let mut session = OverlaySession::new(config.clone(), true);
     session.outputs_changed(vec![Monitor {
@@ -61,7 +63,7 @@ fn temporary_gadget_hiding_preserves_native_layout_enablement_and_save() {
     session.update(config.clone(), true);
     session.failure("test compositor failure".into());
     session.retry();
-    assert_eq!(session.hidden_gadgets.len(), 8);
+    assert_eq!(session.hidden_gadgets.len(), 9);
     assert!(session.status().visible);
     assert_eq!(
         toml::to_string(&session.config_for_save()).unwrap(),
@@ -151,7 +153,7 @@ fn explicit_save_keeps_requested_scales_but_persists_displayed_positions() {
     assert_eq!(saved.wayland.radar.scale, 2.0);
     assert_eq!(saved.wayland.monitor.as_deref(), Some("DP-1"));
     assert!(saved.gap_ahead.enabled);
-    assert_eq!(session.status().gadgets.len(), 9);
+    assert_eq!(session.status().gadgets.len(), 10);
 }
 
 #[test]

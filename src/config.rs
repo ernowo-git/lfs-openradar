@@ -49,6 +49,7 @@ pub struct WaylandSettings {
     pub lap_records: GadgetPlacement,
     pub lap_log: GadgetPlacement,
     pub relative: GadgetPlacement,
+    pub g_force: GadgetPlacement,
 }
 
 /// Built-in overlay appearance, independent of the desktop renderer.
@@ -134,6 +135,9 @@ pub struct Config {
     pub lap_records: GapSettings,
     pub lap_log: GapSettings,
     pub relative: GapSettings,
+    pub g_force: GapSettings,
+    /// Radius of the horizontal G-meter: 1, 2, 3, or 4 G.
+    pub g_force_range_g: u8,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub track_records: crate::lap_records::Records,
     /// Percentage of the configured RPM limit that starts the red/blue blink.
@@ -166,6 +170,8 @@ pub struct Config {
     /// Follow the viewed car in live single player; multiplayer still uses your own car.
     pub follow_viewed_car: bool,
     pub radar_enabled: bool,
+    /// Fade the radar out after two seconds without warning indicators.
+    pub radar_auto_hide: bool,
     pub gap_ahead: GapSettings,
     pub gap_behind: GapSettings,
     pub performance_delta: GapSettings,
@@ -223,6 +229,8 @@ impl Default for Config {
             lap_records: GapSettings::default(),
             lap_log: GapSettings::default(),
             relative: GapSettings::default(),
+            g_force: GapSettings::default(),
+            g_force_range_g: 3,
             track_records: BTreeMap::new(),
             rpm_blink_threshold_percent: 95,
             rpm_blink_interval_ms: 100,
@@ -247,6 +255,7 @@ impl Default for Config {
             overlay_toggle_key: "Insert".into(),
             follow_viewed_car: false,
             radar_enabled: true,
+            radar_auto_hide: false,
             gap_ahead: GapSettings::default(),
             gap_behind: GapSettings::default(),
             performance_delta: GapSettings::default(),
@@ -353,6 +362,8 @@ impl Config {
         }
         self.relative.window_x.get_or_insert(24.0);
         self.relative.window_y.get_or_insert(360.0);
+        self.g_force.window_x.get_or_insert(580.0);
+        self.g_force.window_y.get_or_insert(360.0);
     }
     pub fn validate(&self) -> Result<(), String> {
         for (track, cars) in &self.track_records {
@@ -386,6 +397,7 @@ impl Config {
             &self.wayland.lap_records,
             &self.wayland.lap_log,
             &self.wayland.relative,
+            &self.wayland.g_force,
         ]
         .into_iter()
         .enumerate()
@@ -412,6 +424,9 @@ impl Config {
             .is_some_and(|name| name.trim().is_empty())
         {
             return Err("wayland monitor name must not be empty".into());
+        }
+        if !(1..=4).contains(&self.g_force_range_g) {
+            return Err("g_force_range_g must be 1, 2, 3, or 4".into());
         }
         if !(1..=100).contains(&self.rpm_blink_threshold_percent) {
             return Err("rpm_blink_threshold_percent must be 1..100".into());
@@ -468,6 +483,7 @@ impl Config {
             &self.lap_records,
             &self.lap_log,
             &self.relative,
+            &self.g_force,
         ] {
             if [settings.window_x, settings.window_y]
                 .iter()

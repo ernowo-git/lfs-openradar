@@ -133,7 +133,16 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
             508.0,
             top + 19.0,
             Align2::RIGHT_CENTER,
-            row.seconds.map_or("—".into(), |s| format!("{s:.1}")),
+            row.seconds.map_or("—".into(), |s| {
+                let sign = if index < 3 {
+                    "+"
+                } else if index > 3 {
+                    "-"
+                } else {
+                    ""
+                };
+                format!("{sign}{s:.1}")
+            }),
             25.0,
             true,
             color,
@@ -177,16 +186,6 @@ pub(super) fn paint(painter: &egui::Painter, rect: Rect, frame: &RelativeFrame) 
         gt::WHITE,
         175.0,
     );
-    text(
-        12.0,
-        344.0,
-        Align2::LEFT_CENTER,
-        frame.status.clone(),
-        13.0,
-        false,
-        gt::MUTED,
-        496.0,
-    );
 }
 
 #[cfg(test)]
@@ -201,6 +200,8 @@ mod tests {
             let mut frame = crate::demo::relative_preview();
             frame.rows[0].as_mut().unwrap().name =
                 "a very long driver name that must stay within its column".into();
+            frame.rows[0].as_mut().unwrap().seconds = Some(0.8);
+            frame.rows[4].as_mut().unwrap().seconds = Some(0.8);
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 paint(
                     &ctx.layer_painter(egui::LayerId::background()),
@@ -208,6 +209,13 @@ mod tests {
                     &frame,
                 )
             });
+            for expected in ["+0.8", "+7.4", "—", "0.0", "-0.8", "-4.8", "-6.3"] {
+                assert!(
+                    output.shapes.iter().any(|shape| matches!(&shape.shape,
+                    egui::Shape::Text(text) if text.galley.text() == expected)),
+                    "missing {expected}"
+                );
+            }
             for shape in output.shapes {
                 if let egui::Shape::Text(text) = shape.shape {
                     assert!(
