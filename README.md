@@ -1,7 +1,7 @@
 # lfs-openradar
 
 OpenRadar supports LFS 0.8C29. It is a standalone overlay for Live for Speed with a proximity radar,
-a speed and indicator dashboard, a G-force meter, fuel range and refuelling estimates,
+a speed and indicator dashboard, input telemetry, a G-force meter, fuel range and refuelling estimates,
 estimated gaps to the cars ahead and behind,
 and a real-time performance delta
 against your best clean lap in the current session. Each gadget has its own
@@ -23,6 +23,7 @@ primary platform; Linux/X11 support is experimental.
 - [Local OutSim/OutGauge recording, with an optional InSim connection](docs/local-recording.md)
 - Proximity radar
 - [G-force meter with a fading trail and measured peaks](docs/usage.md#g-force-meter)
+- [Steering and pedal inputs with a simple throttle/brake history graph](docs/usage.md#input-telemetry)
 - [Speed, gear, RPM, and warning indicators](docs/configuration.md#speed-dashboard)
 - [Fuel level, laps until empty, and additional fuel needed to finish](docs/usage.md#fuel)
 - [Per-track/car PB lap splits and independent best sectors](docs/usage.md#lap-records)

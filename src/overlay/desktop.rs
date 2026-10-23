@@ -153,7 +153,7 @@ struct App {
     overlay_window: OverlayWindow,
     overlay_feedback: Arc<Mutex<OverlayFeedback>>,
     overlay_data: Arc<Mutex<OverlayData>>,
-    gap_overlays: [GapOverlay; 9],
+    gap_overlays: [GapOverlay; 10],
     tab: ControlTab,
     opening_layout_passes: u8,
     recording_directory: String,
@@ -236,6 +236,7 @@ impl App {
             GapOverlay::new(&config.lap_log, &overlay_data),
             GapOverlay::new(&config.relative, &overlay_data),
             GapOverlay::new(&config.g_force, &overlay_data),
+            GapOverlay::new(&config.inputs, &overlay_data),
         ];
         let mut app = Self {
             initial_backend: config.overlay_backend,
@@ -575,6 +576,7 @@ impl App {
             &mut self.config.lap_log,
             &mut self.config.relative,
             &mut self.config.g_force,
+            &mut self.config.inputs,
         ]) {
             if let Ok(mut feedback) = gap.feedback.lock() {
                 if let Some(position) = feedback.moved_to.take() {
@@ -648,12 +650,19 @@ impl App {
                     "relative-overlay",
                     "LFS OpenRadar · Relative",
                 )
-            } else {
+            } else if index == 8 {
                 (
                     Gadget::GForce,
                     &self.config.g_force,
                     "g-force-overlay",
                     "LFS OpenRadar · G-force",
+                )
+            } else {
+                (
+                    Gadget::Inputs,
+                    &self.config.inputs,
+                    "inputs-overlay",
+                    "LFS OpenRadar · Input telemetry",
                 )
             };
             let visible = overlay_visible(
@@ -700,6 +709,7 @@ impl App {
                         Gadget::LapLog => super::lap_log_style::SIZE,
                         Gadget::Relative => super::relative_style::SIZE,
                         Gadget::GForce => super::g_force_style::SIZE,
+                        Gadget::Inputs => super::inputs_style::SIZE,
                         Gadget::Delta => theme.delta.panel.size,
                         Gadget::Ahead => theme.ahead.panel.size,
                         Gadget::Behind => theme.behind.panel.size,
@@ -916,6 +926,7 @@ impl App {
             ("/o hud lap-log", Gadget::LapLog),
             ("/o hud relative", Gadget::Relative),
             ("/o hud g-force", Gadget::GForce),
+            ("/o hud inputs", Gadget::Inputs),
         ] {
             ui.horizontal_wrapped(|ui| {
                 ui.monospace(command);
@@ -1427,6 +1438,37 @@ impl App {
                                             ui.add(egui::Slider::new(&mut self.config.fuel.scale, 0.5..=2.0).text("Scale"));
                                             ui.label(egui::RichText::new("REFUEL is additional tank %. * means more than one stop. Usage uses up to 5 full laps; timed-race finish estimates are unavailable.").small());
                                         }
+                                        Gadget::Inputs => {
+                                            ui.checkbox(&mut self.config.inputs.enabled, "Enabled");
+                                            let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 100.0), egui::Sense::hover());
+                                            super::inputs_style::paint(ui.painter(), rect, &snapshot.inputs, &self.config, snapshot.dashboard.car.as_deref());
+                                            ui.label(egui::RichText::new(&snapshot.inputs.status).small());
+                                            if let Some(code) = snapshot.dashboard.car.as_ref().filter(|code| code.as_str() != "DEMO") {
+                                                let automatic = crate::inputs::steering_ratio(&self.config, Some(code));
+                                                let mut custom = self.config.cars.get(code).is_some_and(|profile| profile.steering_ratio.is_some());
+                                                if ui.checkbox(&mut custom, "Custom steering ratio").changed() {
+                                                    self.config.set_car_steering_ratio(code, custom.then_some(automatic.unwrap_or(15.0)));
+                                                }
+                                                if custom {
+                                                    let profile = self.config.cars.get_mut(code).unwrap();
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(format!("{code} ratio"));
+                                                        ui.add(egui::DragValue::new(profile.steering_ratio.as_mut().unwrap()).range(1.0..=100.0).speed(0.1).suffix(":1"));
+                                                    });
+                                                } else if let Some(ratio) = crate::inputs::steering_ratio(&self.config, Some(code)) {
+                                                    ui.label(format!("{code} steering ratio: {ratio}:1"));
+                                                } else {
+                                                    ui.label("Road-wheel angle shown. Set this car's ratio to match its cockpit wheel.");
+                                                }
+                                            } else if self.demo.is_none() {
+                                                ui.label("Connect InSim to detect the car and convert steering-wheel degrees.");
+                                            }
+                                            let gap = &mut self.gap_overlays[9];
+                                            ui.checkbox(&mut gap.editing, "Position mode");
+                                            gap_position_controls(ui, &mut self.config.inputs, &mut gap.window, gap.editing);
+                                            ui.add(egui::Slider::new(&mut self.config.inputs.scale, 0.5..=2.0).text("Scale"));
+                                            ui.label(egui::RichText::new("STEER: cockpit-wheel degrees using the car's steering ratio. ROAD STEER: raw road-wheel angle. T: throttle, B: brake, C: clutch (%). Green/red: last 5 seconds.").small());
+                                        }
                                         Gadget::GForce => {
                                             ui.checkbox(&mut self.config.g_force.enabled, "Enabled");
                                             let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 185.0), egui::Sense::hover());
@@ -1587,6 +1629,7 @@ const GADGETS: &[Gadget] = &[
     Gadget::LapLog,
     Gadget::Relative,
     Gadget::GForce,
+    Gadget::Inputs,
 ];
 impl Gadget {
     fn title(self) -> &'static str {
@@ -1601,6 +1644,7 @@ impl Gadget {
             Self::LapLog => "Lap-time log",
             Self::Relative => "Relative",
             Self::GForce => "G-force",
+            Self::Inputs => "Input telemetry",
         }
     }
 }
@@ -1869,6 +1913,21 @@ fn render_gap_overlay(
         .source
         .snapshot(data.started.elapsed().as_millis() as u64, &data.config);
     let theme = theme::resolve(data.config.hud_style);
+    if kind == Gadget::Inputs {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(child, |ui| {
+                super::inputs_style::paint(
+                    ui.painter(),
+                    ui.max_rect(),
+                    &snapshot.inputs,
+                    &data.config,
+                    snapshot.dashboard.car.as_deref(),
+                )
+            });
+        overlay_painted(child, &data, feedback);
+        return;
+    }
     if kind == Gadget::GForce {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -2630,6 +2689,7 @@ mod tests {
             (Gadget::LapLog, "lap-log-overlay"),
             (Gadget::Relative, "relative-overlay"),
             (Gadget::GForce, "g-force-overlay"),
+            (Gadget::Inputs, "inputs-overlay"),
         ];
         let input = || egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
@@ -3043,6 +3103,7 @@ mod tests {
             "/o hud lap-records",
             "/o hud lap-log",
             "/o hud relative",
+            "/o hud inputs",
             "Getting started and shortcuts",
             "Local recording",
             "Troubleshooting",

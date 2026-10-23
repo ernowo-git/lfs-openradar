@@ -34,6 +34,7 @@ pub struct Snapshot {
     pub lap_log: crate::lap_log::LapLogFrame,
     pub relative: crate::relative::RelativeFrame,
     pub g_force: crate::g_force::GForceFrame,
+    pub inputs: crate::inputs::InputsFrame,
     pub lap_records_error: Option<String>,
     pub outgauge_error: Option<String>,
     pub outgauge_forward_error: Option<String>,
@@ -329,6 +330,7 @@ fn run(
     let mut stats = Snapshot::default();
     let mut dashboard = crate::dashboard::DashboardTelemetry::default();
     let mut g_force = crate::g_force::GForceTelemetry::default();
+    let mut inputs = crate::inputs::InputsTelemetry::default();
     let mut g_force_target = None;
     let mut g_force_track: Option<String> = None;
     let mut gauge = None;
@@ -383,6 +385,7 @@ fn run(
             dashboard.clear();
             if config.insim_enabled {
                 g_force.clear();
+                inputs.clear();
             }
             framer = Framer::default();
             protocol_ready = false;
@@ -531,6 +534,7 @@ fn run(
                                         };
                                         if reset_g_force {
                                             g_force.clear();
+                                            inputs.clear();
                                         }
                                         let invalidate = match &packet {
                                             Packet::State(_)
@@ -574,10 +578,12 @@ fn run(
                                                 .is_some_and(|old| old != &target)
                                             {
                                                 g_force.clear();
+                                                inputs.clear();
                                             }
                                             g_force_target = Some(target);
                                         } else {
                                             g_force.suspend();
+                                            inputs.clear();
                                         }
                                         if refresh && let Err(error) = request_roster(stream) {
                                             disconnected = Some(error.to_string());
@@ -643,6 +649,7 @@ fn run(
             engine.clear();
             dashboard.clear();
             g_force.clear();
+            inputs.clear();
             stats.error = Some(error);
             retry_at = now + 2000;
         }
@@ -698,6 +705,7 @@ fn run(
                                     && engine.outsim(telemetry.sample.clone(), received, &config))
                             {
                                 g_force.receive(&telemetry, received, config.stale_ms);
+                                inputs.receive(&telemetry, received, config.stale_ms);
                             }
                         }
                         Err(error) => {
@@ -747,6 +755,7 @@ fn run(
         let render_now = start.elapsed().as_millis() as u64;
         stats.dashboard = dashboard.frame(render_now, &config, engine.dashboard_player());
         stats.g_force = g_force.frame(render_now, config.stale_ms);
+        stats.inputs = inputs.frame(render_now, config.stale_ms);
         stats.fuel = engine.fuel(render_now, &config);
         if let Some(store) = &store {
             // ponytail: occasional config writes run here; move I/O off-thread if slow storage stalls telemetry.

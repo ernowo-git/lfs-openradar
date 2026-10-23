@@ -10,6 +10,7 @@ pub mod demo;
 pub mod fuel;
 pub mod g_force;
 pub mod gaps;
+pub mod inputs;
 pub mod lap_log;
 pub mod lap_records;
 pub mod lfs;

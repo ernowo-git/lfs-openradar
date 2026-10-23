@@ -41,6 +41,7 @@ impl Gadget {
             Self::LapLog => Some(&mut config.lap_log),
             Self::Relative => Some(&mut config.relative),
             Self::GForce => Some(&mut config.g_force),
+            Self::Inputs => Some(&mut config.inputs),
         }
     }
     pub fn placement(self, config: &Config) -> &GadgetPlacement {
@@ -55,6 +56,7 @@ impl Gadget {
             Self::LapLog => &config.wayland.lap_log,
             Self::Relative => &config.wayland.relative,
             Self::GForce => &config.wayland.g_force,
+            Self::Inputs => &config.wayland.inputs,
         }
     }
     pub fn placement_mut(self, config: &mut Config) -> &mut GadgetPlacement {
@@ -69,6 +71,7 @@ impl Gadget {
             Self::LapLog => &mut config.wayland.lap_log,
             Self::Relative => &mut config.wayland.relative,
             Self::GForce => &mut config.wayland.g_force,
+            Self::Inputs => &mut config.wayland.inputs,
         }
     }
 }
@@ -213,6 +216,13 @@ impl OverlaySession {
                         &snapshot.g_force,
                         config.g_force_range_g,
                     ),
+                    Gadget::Inputs => super::inputs_style::paint(
+                        &painter,
+                        geometry.rect,
+                        &snapshot.inputs,
+                        &config,
+                        snapshot.dashboard.car.as_deref(),
+                    ),
                     Gadget::LapLog => {
                         super::lap_log_style::paint(&painter, geometry.rect, &snapshot.lap_log)
                     }
@@ -306,6 +316,7 @@ impl OverlaySession {
             super::lap_log_style::SIZE,
             super::relative_style::SIZE,
             super::g_force_style::SIZE,
+            super::inputs_style::SIZE,
         ];
         let enabled_flags = [
             self.config.radar_enabled,
@@ -318,6 +329,7 @@ impl OverlaySession {
             self.config.lap_log.enabled,
             self.config.relative.enabled,
             self.config.g_force.enabled,
+            self.config.inputs.enabled,
         ];
         let mut gadgets = Vec::new();
         if available {
@@ -332,6 +344,7 @@ impl OverlaySession {
                 Gadget::LapLog,
                 Gadget::Relative,
                 Gadget::GForce,
+                Gadget::Inputs,
             ]
             .into_iter()
             .enumerate()
@@ -365,6 +378,10 @@ impl OverlaySession {
                     Gadget::GForce => Vec2::new(
                         (logical_size.x - size.x) / 2.0,
                         (logical_size.y - size.y) / 2.0,
+                    ),
+                    Gadget::Inputs => Vec2::new(
+                        (logical_size.x - size.x) / 2.0,
+                        (logical_size.y - size.y - 200.0).max(24.0),
                     ),
                     Gadget::LapLog => Vec2::new(
                         logical_size.x - size.x - 24.0,

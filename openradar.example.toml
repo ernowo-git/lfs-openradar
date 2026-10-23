@@ -1,4 +1,4 @@
-# Disable this for local recording and the G-meter without InSim HUD features.
+# Disable this for local recording, input telemetry, and the G-meter without InSim.
 insim_enabled = true
 # Local LFS client. Enable its listener by typing /insim 29999 in LFS.
 overlay_backend = "auto" # or "window" / "wayland" to override; see docs/native-wayland.md
@@ -22,7 +22,7 @@ rpm_blink_threshold_percent = 95
 rpm_blink_interval_ms = 100
 # Horizontal G-meter radius: 1, 2, 3, or 4 G. Takes effect without reconnecting.
 g_force_range_g = 3
-# Decimal 511 = LFS OutSim Opts 1ff (hexadecimal), full LFST packet.
+# Decimal 511 = LFS OutSim Opts 1ff (hexadecimal), including gadget input data.
 outsim_options = 511
 outsim_id = 24601
 mci_interval_ms = 20
@@ -59,6 +59,13 @@ radar_auto_hide = false
 enabled = false
 window_x = 580.0
 window_y = 360.0
+scale = 1.0
+
+# Steering and pedals with five seconds of throttle/brake history.
+[inputs]
+enabled = false
+window_x = 580.0
+window_y = 740.0
 scale = 1.0
 
 # Each gap has its own overlay window. Positions are logical screen pixels.
@@ -119,3 +126,5 @@ scale = 1.0
 [cars.XFG]
 name = "XF GTI"
 max_rpm = 8000
+# Optional cockpit-wheel / road-wheel steering ratio. XFG automatically uses 15:1.
+# steering_ratio = 15.0

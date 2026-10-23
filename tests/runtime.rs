@@ -115,6 +115,7 @@ fn local_hud_commands_preserve_visibility_order_and_active_recording() {
         ("lap-log", Gadget::LapLog),
         ("relative", Gadget::Relative),
         ("g-force", Gadget::GForce),
+        ("inputs", Gadget::Inputs),
     ] {
         let command = format!(" HuD\t{} ", name.to_ascii_uppercase());
         let mut hidden = BTreeSet::new();
@@ -500,6 +501,10 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     let live = overlay_reader.snapshot();
     assert!(live.frame.live, "{live:?}");
     let [right, forward] = live.g_force.current.expect("fresh matching G-force");
+    assert!(
+        live.inputs.current.is_some(),
+        "fresh matching OutSim inputs"
+    );
     assert!((right - 1.0).abs() < 0.0001);
     assert!(forward.abs() < 0.0001);
     assert!(live.relative.rows[3].is_some());
@@ -553,6 +558,8 @@ fn mock_lfs(follow: bool, shared: bool, protocol: u8, fuel_only: bool) {
     thread::sleep(Duration::from_millis(350));
     let paused = overlay_reader.snapshot();
     assert!(paused.g_force.current.is_none());
+    assert!(paused.inputs.current.is_none());
+    assert!(paused.inputs.history.is_empty());
     assert!(paused.g_force.trail.is_empty());
     assert!(paused.g_force.peak_g > 0.99);
     assert!(paused.connected);

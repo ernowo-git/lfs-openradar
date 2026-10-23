@@ -48,6 +48,37 @@ Open the control panel's **Help** tab for the `/o` command reference, gadget
 names, shortcuts, setup instructions, recording availability, troubleshooting,
 and links to the full documentation.
 
+## Input telemetry
+
+Enable **Input telemetry** in Gadgets for a rotating steering wheel, steering
+angle in degrees, and three pedal bars: **T** (throttle, green), **B** (brake,
+red), and **C** (clutch, yellow). Numbers above the bars are percentages.
+The simple green/red graph scrolls through the last **5 seconds** of throttle
+and brake, with the newest samples on the right and 0–100% from bottom to top.
+**STEER** shows cockpit-wheel degrees after applying the car's steering ratio
+to OutSim's road-wheel input angle. XFG automatically uses its documented
+[15:1 ratio](https://en.lfsmanual.net/wiki/XFG): ±30° of road-wheel input becomes
+±450° at the cockpit wheel, or 900° from lock to lock. Both the icon and number
+use this conversion. InSim supplies the car identity, even without OutGauge.
+For another car or a vehicle mod, enable **Custom steering ratio** in the
+gadget's card and enter that car's ratio. **Save settings** keeps the override.
+When the car or its ratio is unknown, **ROAD STEER** explicitly shows the raw
+road-wheel angle. Standalone OutSim also uses this fallback. Controller wheel
+calibration and LFS's wheel-turn compensation remain separate settings.
+
+This gadget uses OutSim's **INPUTS** block and needs no OutGauge. The default
+`outsim_options = 511` already includes it; legacy OutSim packets do not.
+Use **Configure OutSim** with LFS closed to apply the configured packet layout.
+With `insim_enabled = false`, the gadget works independently. With InSim
+enabled, it follows the existing driver and cockpit/custom-view rules,
+including **Follow viewed car**.
+
+Missing or stale data shows **NO DATA** and unavailable readings. Repeated
+simulation timestamps do not keep paused inputs live. History clears on
+driver/session changes, reconnects, and telemetry interruptions.
+Position mode, X/Y, and Scale work on both backends, with independent layouts.
+Use `/o hud inputs` to toggle temporary visibility when InSim is connected.
+
 ## G-force meter
 
 Enable **G-force** in Gadgets. The outer ring defaults to **3 G**; choose a
@@ -331,10 +362,11 @@ Use `/o hud <gadget>` to toggle one gadget temporarily:
 /o hud radar
 /o hud relative
 /o hud g-force
+/o hud inputs
 ```
 
 Gadget names are `radar`, `ahead`, `behind`, `delta`, `speed`, `fuel`,
-`lap-records`, `lap-log`, `relative`, and `g-force`. Names are case-insensitive. Individual
+`lap-records`, `lap-log`, `relative`, `g-force`, and `inputs`. Names are case-insensitive. Individual
 commands preserve the gadget's **Enabled** setting, position, scale, telemetry,
 and recording. Disabled gadgets must still be enabled in the control panel.
 The master **Show overlays** setting and background-hiding rules still apply.
