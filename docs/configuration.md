@@ -155,6 +155,46 @@ independent; scales accept 0.5–2.0. Range changes take effect immediately.
 **Save settings** saves preferences, not the trail or measured peaks.
 See [G-force usage](usage.md#g-force-meter) for axes and reset behavior.
 
+## Input telemetry
+
+Input telemetry defaults to disabled. Enable **Input telemetry** in Gadgets.
+It uses the OutSim INPUTS block (`0x10`); the default `outsim_options = 511`
+includes it. Legacy packets (`outsim_options = 0`) cannot supply these inputs.
+OutGauge is not required, and `insim_enabled = false` supports standalone use.
+
+```toml
+[inputs]
+enabled = true
+window_x = 580.0
+window_y = 740.0
+scale = 1.0
+
+[wayland.inputs]
+x = 580.0
+y = 740.0
+scale = 1.0
+```
+
+The base panel is 660 × 160 logical pixels. Desktop and native Wayland keep
+independent positions and scales (0.5–2.0). **Save settings** saves preferences;
+the five-second throttle/brake history stays in memory.
+
+InSim identifies the car for steering-wheel conversion. XFG automatically
+uses its documented [15:1 steering ratio](https://en.lfsmanual.net/wiki/XFG).
+Use **Custom steering ratio** in the gadget card to set a per-car override
+(1–100), or add it to that car's existing profile:
+
+```toml
+[cars.XFG]
+name = "XF GTI"
+max_rpm = 8000
+steering_ratio = 15.0 # optional override; XFG already defaults to 15:1
+```
+
+Ratio changes take effect immediately. Without a detected car or a known
+ratio, the gadget labels the unconverted input angle **ROAD STEER**.
+See [Input telemetry usage](usage.md#input-telemetry) for units and availability.
+
 ## InSim password
 
 Place this top-level setting before any `[section]` headings:

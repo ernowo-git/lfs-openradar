@@ -383,6 +383,7 @@ mod tests {
                 name: "XF GTI".into(),
                 max_rpm: 8000,
                 fuel_tank_litres: None,
+                ..Default::default()
             },
         );
         assert_eq!(rpm_fraction(&frame, &config), Some(0.8));

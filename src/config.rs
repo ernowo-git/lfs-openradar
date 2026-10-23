@@ -50,6 +50,7 @@ pub struct WaylandSettings {
     pub lap_log: GadgetPlacement,
     pub relative: GadgetPlacement,
     pub g_force: GadgetPlacement,
+    pub inputs: GadgetPlacement,
 }
 
 /// Built-in overlay appearance, independent of the desktop renderer.
@@ -103,6 +104,9 @@ pub struct CarProfile {
     /// Zero is accepted for legacy capacity-only profiles; the RPM bar stays unavailable.
     #[serde(default)]
     pub max_rpm: u32,
+    /// Steering-wheel angle divided by road-wheel input angle; None uses a known car default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steering_ratio: Option<f32>,
     /// Read old settings without exposing or saving the retired litres option.
     #[serde(default, skip_serializing)]
     pub fuel_tank_litres: Option<f64>,
@@ -136,6 +140,7 @@ pub struct Config {
     pub lap_log: GapSettings,
     pub relative: GapSettings,
     pub g_force: GapSettings,
+    pub inputs: GapSettings,
     /// Radius of the horizontal G-meter: 1, 2, 3, or 4 G.
     pub g_force_range_g: u8,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -221,6 +226,7 @@ impl Default for Config {
                 CarProfile {
                     name: "XF GTI".into(),
                     max_rpm: 8000,
+                    steering_ratio: None,
                     fuel_tank_litres: None,
                 },
             )]),
@@ -230,6 +236,7 @@ impl Default for Config {
             lap_log: GapSettings::default(),
             relative: GapSettings::default(),
             g_force: GapSettings::default(),
+            inputs: GapSettings::default(),
             g_force_range_g: 3,
             track_records: BTreeMap::new(),
             rpm_blink_threshold_percent: 95,
@@ -364,7 +371,32 @@ impl Config {
         self.relative.window_y.get_or_insert(360.0);
         self.g_force.window_x.get_or_insert(580.0);
         self.g_force.window_y.get_or_insert(360.0);
+        self.inputs.window_x.get_or_insert(580.0);
+        self.inputs.window_y.get_or_insert(740.0);
     }
+    /// Removing the only setting of a steering-only profile must not leave an
+    /// invalid empty profile behind. Keep existing RPM and legacy fuel settings.
+    pub fn set_car_steering_ratio(&mut self, car: &str, ratio: Option<f32>) {
+        if ratio.is_none()
+            && self
+                .cars
+                .get(car)
+                .is_some_and(|p| p.max_rpm == 0 && p.fuel_tank_litres.is_none())
+        {
+            self.cars.remove(car);
+        } else if ratio.is_some() {
+            self.cars
+                .entry(car.into())
+                .or_insert(CarProfile {
+                    name: car.into(),
+                    ..Default::default()
+                })
+                .steering_ratio = ratio;
+        } else if let Some(profile) = self.cars.get_mut(car) {
+            profile.steering_ratio = None;
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         for (track, cars) in &self.track_records {
             if track.is_empty()
@@ -398,6 +430,7 @@ impl Config {
             &self.wayland.lap_log,
             &self.wayland.relative,
             &self.wayland.g_force,
+            &self.wayland.inputs,
         ]
         .into_iter()
         .enumerate()
@@ -437,12 +470,20 @@ impl Config {
         for (code, profile) in &self.cars {
             if code.trim().is_empty()
                 || profile.name.trim().is_empty()
-                || (profile.max_rpm == 0 && profile.fuel_tank_litres.is_none())
+                || (profile.max_rpm == 0
+                    && profile.fuel_tank_litres.is_none()
+                    && profile.steering_ratio.is_none())
             {
                 return Err(
-                    "car profiles require a car code, a name, and an RPM limit or fuel capacity"
+                    "car profiles require a car code, a name, and an RPM limit, steering ratio, or fuel capacity"
                         .into(),
                 );
+            }
+            if profile
+                .steering_ratio
+                .is_some_and(|v| !v.is_finite() || !(1.0..=100.0).contains(&v))
+            {
+                return Err("steering ratio must be finite and between 1 and 100".into());
             }
             if profile
                 .fuel_tank_litres
@@ -484,6 +525,7 @@ impl Config {
             &self.lap_log,
             &self.relative,
             &self.g_force,
+            &self.inputs,
         ] {
             if [settings.window_x, settings.window_y]
                 .iter()

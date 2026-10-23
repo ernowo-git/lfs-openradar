@@ -196,6 +196,7 @@ impl Demo {
             lap_log: lap_log_preview(),
             relative: relative_preview(),
             g_force: g_force_preview(now),
+            inputs: inputs_preview(now),
             version: "synthetic".into(),
             frame,
             mci_sets: self.engine.mci_sets,
@@ -203,6 +204,32 @@ impl Demo {
             rejected_outsim: self.engine.rejected_outsim,
             ..Default::default()
         }
+    }
+}
+
+/// Synthetic controls for the input gadget; never used for live data.
+pub fn inputs_preview(now: u64) -> crate::inputs::InputsFrame {
+    let pedals = |at: u64| {
+        let phase = at as f32 / 1000.0 * 1.3;
+        [phase.sin().max(0.0), (-phase.sin()).max(0.0) * 0.85]
+    };
+    let [throttle, brake] = pedals(now);
+    crate::inputs::InputsFrame {
+        current: Some(crate::lfs::outsim::Inputs {
+            throttle,
+            brake,
+            steer_rad: (now as f32 / 1000.0).sin() * 0.4,
+            clutch: 0.0,
+            handbrake: 0.0,
+        }),
+        history: (0..=crate::inputs::HISTORY_MS / 20)
+            .rev()
+            .filter_map(|i| {
+                let age = i * 20;
+                now.checked_sub(age).map(|at| (age, pedals(at)))
+            })
+            .collect(),
+        status: "Synthetic input telemetry preview".into(),
     }
 }
 

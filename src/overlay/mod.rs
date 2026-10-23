@@ -22,6 +22,8 @@ mod gt7_style;
 #[cfg(feature = "desktop")]
 mod hotkey;
 #[cfg(feature = "desktop")]
+mod inputs_style;
+#[cfg(feature = "desktop")]
 mod lap_log_style;
 #[cfg(feature = "desktop")]
 mod lap_records_style;
@@ -57,6 +59,7 @@ pub enum Gadget {
     LapLog,
     Relative,
     GForce,
+    Inputs,
 }
 
 impl Gadget {
@@ -72,6 +75,7 @@ impl Gadget {
             "lap-log" => Some(Self::LapLog),
             "relative" => Some(Self::Relative),
             "g-force" => Some(Self::GForce),
+            "inputs" => Some(Self::Inputs),
             _ => None,
         }
     }
